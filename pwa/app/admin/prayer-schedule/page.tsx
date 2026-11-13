@@ -44,6 +44,7 @@ function statusStyle(item?: MonthInfo | null): React.CSSProperties {
 
 export default function PrayerScheduleAdminPage() {
   const [month, setMonth] = useState(monthKeyNow());
+  const [sourceUrl, setSourceUrl] = useState("https://timing.athanplus.com/masjid/widgets/monthly?masjid_id=adJEGWAk&theme=1");
   const [rows, setRows] = useState<PrayerTimes>({});
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState("");
@@ -58,7 +59,7 @@ export default function PrayerScheduleAdminPage() {
   async function load(target = month) {
     if (!token) { location.replace("/admin/"); return; }
     setBusy("load"); setMessage("");
-    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); setRows(data.prayerTimes || {}); setDirty(false); }
+    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to load schedule"); }
     finally { setBusy(""); }
   }
@@ -73,10 +74,10 @@ export default function PrayerScheduleAdminPage() {
   async function preview() {
     setBusy("preview"); setMessage("");
     try {
-      const data = await call("/admin/prayer-schedule", { method: "POST", body: JSON.stringify({ action: "preview", month }) });
-      setRows(data.prayerTimes || {}); setDirty(false);
+      const data = await call("/admin/prayer-schedule", { method: "POST", body: JSON.stringify({ action: "preview", month, sourceUrl }) });
+      setRows(data.prayerTimes || {}); setDirty(true);
       setMessage(`Pulled ${Object.keys(data.prayerTimes || {}).length} days from Al-Hijra. This month is now marked Pulled — review. Publish it when you approve the times.`);
-      await load(month);
+      // Keep the imported preview visible; reloading here would overwrite it with published data.
     } catch (error) { setMessage(error instanceof Error ? error.message : "Unable to pull Al-Hijra schedule"); }
     finally { setBusy(""); }
   }
@@ -134,6 +135,7 @@ export default function PrayerScheduleAdminPage() {
         <div style={s.card}>
           <div style={s.cardTitle}>Monthly source</div><div style={s.sourceName}>AL-HIJRA MASJID • AthanPlus</div><a href={status?.sourceUrl || "https://timing.athanplus.com/masjid/widgets/monthly?masjid_id=adJEGWAk&theme=1"} target="_blank" rel="noreferrer" style={s.link}>Open source timetable ↗</a>
           <div style={s.row}><span>Month</span><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={s.input} /></div>
+          <label style={{display:"block",marginTop:14,fontWeight:800,fontSize:13}}>AthanPlus monthly timetable URL</label><input type="url" aria-label="AthanPlus monthly source URL" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} style={{...s.input,width:"100%",marginTop:6,boxSizing:"border-box"}} /><p style={s.help}>Import source is restricted to timing.athanplus.com. Select a month, preview, verify dates and times, then approve before publishing. Iqamah and Jumu'ah times are not imported.</p>
           <button disabled={Boolean(busy)} onClick={() => void preview()} style={s.primary}>{busy === "preview" ? "Pulling…" : "✨ Pull month from Al-Hijra"}</button><p style={s.help}>Pulling marks this month as <strong>Pulled — review</strong>. It is not approved until you publish it.</p>
         </div>
         <div style={s.card}>
