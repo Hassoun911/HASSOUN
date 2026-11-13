@@ -9,7 +9,8 @@ const links = [
   ["📖 Quran", "/admin/quran"],
   ["🔔 Push", "/admin/push"],
   ["🛠️ Support", "/admin/support"],
-  ["⚙️ Settings", "/admin/settings"]
+  ["⚙️ Settings", "/admin/settings"],
+  ["🕌 Windsor Prayer Times", "/admin/prayer-schedule"]
 ] as const;
 
 export default function AdminDashboardShell() {
