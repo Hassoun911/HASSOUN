@@ -116,6 +116,18 @@ export default function PrayerScheduleAdminPage() {
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to change auto sync"); }
     finally { setBusy(""); }
   }
+  async function saveSource() {
+    setBusy("source"); setMessage("");
+    try { const data=await call("/admin/prayer-schedule",{method:"POST",body:JSON.stringify({action:"set_source",sourceUrl})}); setSourceUrl(data.sourceUrl); setMessage("Automatic import source saved. Future checks will use this timetable."); }
+    catch(error) { setMessage(error instanceof Error?error.message:"Unable to save source"); } finally { setBusy(""); }
+  }
+  async function syncNow() {
+    if(!confirm("Fetch and validate the AthanPlus calendar now, then automatically publish valid changes?")) return;
+    setBusy("sync"); setMessage("");
+    try { const data=await call("/admin/prayer-schedule",{method:"POST",body:JSON.stringify({action:"sync_now"})});
+      setMessage(data.result?.status==="error"?"Automatic sync failed: "+data.result.error:"Sync completed: "+(data.result?.status||"unknown")); await load(month); }
+    catch(error) {setMessage(error instanceof Error?error.message:"Sync failed"); } finally {setBusy("");}
+  }
   function edit(date: string, prayer: Prayer, value: string) { setDirty(true); setRows((old) => ({ ...old, [date]: { ...old[date], [prayer]: value } })); }
 
   const actionLabel = busy === "approve" ? "Approving…" : busy === "publish" ? "Publishing…" : canApproveExisting ? "Approve existing month" : "Approve & Publish to Hassoun JSON";
@@ -135,12 +147,12 @@ export default function PrayerScheduleAdminPage() {
         <div style={s.card}>
           <div style={s.cardTitle}>Monthly source</div><div style={s.sourceName}>AL-HIJRA MASJID • AthanPlus</div><a href={status?.sourceUrl || "https://timing.athanplus.com/masjid/widgets/monthly?masjid_id=adJEGWAk&theme=1"} target="_blank" rel="noreferrer" style={s.link}>Open source timetable ↗</a>
           <div style={s.row}><span>Month</span><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={s.input} /></div>
-          <label style={{display:"block",marginTop:14,fontWeight:800,fontSize:13}}>AthanPlus monthly timetable URL</label><input type="url" aria-label="AthanPlus monthly source URL" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} style={{...s.input,width:"100%",marginTop:6,boxSizing:"border-box"}} /><p style={s.help}>Import source is restricted to timing.athanplus.com. Select a month, preview, verify dates and times, then approve before publishing. Iqamah and Jumu'ah times are not imported.</p>
+          <label style={{display:"block",marginTop:14,fontWeight:800,fontSize:13}}>AthanPlus monthly timetable URL</label><input type="url" aria-label="AthanPlus monthly source URL" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} style={{...s.input,width:"100%",marginTop:6,boxSizing:"border-box"}} /><p style={s.help}>Import source is restricted to timing.athanplus.com. Select a month, preview, verify dates and times, then approve before publishing. Iqamah and Jumu'ah times are not imported.</p><button disabled={Boolean(busy)} onClick={() => void saveSource()} style={{...s.secondary,marginTop:10,width:"100%"}}>Save automatic import URL</button>
           <button disabled={Boolean(busy)} onClick={() => void preview()} style={s.primary}>{busy === "preview" ? "Pulling…" : "✨ Pull month from Al-Hijra"}</button><p style={s.help}>Pulling marks this month as <strong>Pulled — review</strong>. It is not approved until you publish it.</p>
         </div>
         <div style={s.card}>
           <div style={s.cardTitle}>Automatic monthly sync</div><div style={s.autoRow}><div><strong>{status?.autoSync ? "ON" : "OFF"}</strong><div style={s.help}>On the 25th and later, Hassoun also checks the next month so the schedule can be ready before month-end.</div></div><button disabled={Boolean(busy)} onClick={() => void setAuto(!status?.autoSync)} style={status?.autoSync ? s.danger : s.secondary}>{status?.autoSync ? "Turn off" : "Turn on"}</button></div>
-          <div style={s.metaLine}>GitHub publishing: <strong>{status?.githubPublishingConfigured ? "Configured" : "Needs one-time setup"}</strong></div>{status?.lastAuto ? <div style={s.metaBox}><div>Last check: {status.lastAuto.checkedDate || "—"}</div><div>Month: {status.lastAuto.month || "—"}</div><div>Status: {status.lastAuto.status || "—"}</div>{status.lastAuto.error ? <div style={{color:"#9b2c2c"}}>{status.lastAuto.error}</div> : null}</div> : null}
+          <button disabled={Boolean(busy) || !status?.githubPublishingConfigured} onClick={() => void syncNow()} style={{...s.primary,marginTop:15}}>{busy==="sync"?"Syncing…":"Sync now & publish valid changes"}</button><p style={s.help}>Automatic sync is controlled here in the Admin Center. A full validated month is required; failure retains the existing calendar.</p><div style={s.metaLine}>GitHub publishing: <strong>{status?.githubPublishingConfigured ? "Configured" : "Needs one-time setup"}</strong></div>{status?.lastAuto ? <div style={s.metaBox}><div>Last check: {status.lastAuto.checkedDate || "—"}</div><div>Month: {status.lastAuto.month || "—"}</div><div>Status: {status.lastAuto.status || "—"}</div>{status.lastAuto.error ? <div style={{color:"#9b2c2c"}}>{status.lastAuto.error}</div> : null}</div> : null}
         </div>
       </section>
 
