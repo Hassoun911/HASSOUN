@@ -39,9 +39,9 @@ function parseMonthHtml(html: string, monthKey: string): PrayerTimes {
     const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) => cleanCell(m[1]));
     if (cells.length < 9) continue; const day = Number(cells[0]);
     if (!Number.isInteger(day) || day < 1 || day > daysInMonth(year, month)) continue;
-    if (!/^(MON|TUE|WED|THU|FRI|SAT|SUN)$/i.test(cells[2])) continue;
+    const weekday = new Intl.DateTimeFormat("en-US", { timeZone:"UTC", weekday:"short" }).format(new Date(Date.UTC(year, month-1, day))).toUpperCase(); if(cells[2].slice(0,3).toUpperCase()!==weekday) continue;
     const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    try { out[key] = { fajr: to24(cells[3], "fajr"), dhuhr: to24(cells[5], "dhuhr"), asr: to24(cells[6], "asr"), maghrib: to24(cells[7], "maghrib"), isha: to24(cells[8], "isha") }; } catch {}
+    if(out[key]) throw new Error("Duplicate prayer date "+key); const parsed = { fajr: to24(cells[3], "fajr"), dhuhr: to24(cells[5], "dhuhr"), asr: to24(cells[6], "asr"), maghrib: to24(cells[7], "maghrib"), isha: to24(cells[8], "isha") }; const mins = PRAYERS.map(p => { const [h,m] = parsed[p].split(":").map(Number); return h*60+m; }); if(mins.some((v,i)=>i>0&&v<=mins[i-1])) throw new Error("Invalid prayer order "+key); out[key]=parsed;
   }
   const expected = daysInMonth(year, month); if (Object.keys(out).length !== expected) throw new Error(`Expected ${expected} prayer rows for ${monthKey}, found ${Object.keys(out).length}`);
   return out;
@@ -49,7 +49,7 @@ function parseMonthHtml(html: string, monthKey: string): PrayerTimes {
 
 async function fetchSourceMonth(env: Env, monthKey: string, requestedSource?: string) {
   // URL imports must never fetch arbitrary hosts, ports or paths (SSRF protection).
-  const base = requestedSource || env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE;
+  const base = requestedSource || await getSetting(env, "prayer_schedule_source_url", env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE);
   const url = new URL(base);
   if (url.protocol !== "https:" || url.hostname !== "timing.athanplus.com" || url.port || url.pathname !== "/masjid/widgets/monthly" || !/^[A-Za-z0-9_-]{4,80}$/.test(url.searchParams.get("masjid_id") || "")) {
     throw new Error("Only AthanPlus monthly mosque timetable HTTPS URLs with a valid masjid_id are supported");
@@ -120,7 +120,7 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
       const schedule = await currentSchedule(env); const monthTimes = monthFromSchedule(schedule, month);
       const autoSync = await getSetting(env, "prayer_schedule_auto_sync", false); const lastAuto = await getSetting(env, "prayer_schedule_last_auto", null as null | Record<string, unknown>); const monthStates = await getSetting<MonthStates>(env, "prayer_schedule_month_states", {});
       const year = Number(month.slice(0, 4)) || new Date().getUTCFullYear();
-      return json({ ok: true, month, prayerTimes: monthTimes, sourceUrl: env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE, scheduleUrl: env.SCHEDULE_URL, autoSync, lastAuto, githubPublishingConfigured: Boolean(env.GITHUB_SCHEDULE_TOKEN), selectedMonthState: monthStates[month] || null, yearOverview: yearOverview(schedule, monthStates, year) }, 200, request, env);
+      return json({ ok: true, month, prayerTimes: monthTimes, sourceUrl: await getSetting(env, "prayer_schedule_source_url", env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE), scheduleUrl: env.SCHEDULE_URL, autoSync, lastAuto, githubPublishingConfigured: Boolean(env.GITHUB_SCHEDULE_TOKEN), selectedMonthState: monthStates[month] || null, yearOverview: yearOverview(schedule, monthStates, year) }, 200, request, env);
     }
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405, request, env);
     const body = await request.json() as Record<string, unknown>; const action = typeof body.action === "string" ? body.action : ""; const month = typeof body.month === "string" && /^\d{4}-\d{2}$/.test(body.month) ? body.month : new Date().toISOString().slice(0, 7);
@@ -137,7 +137,21 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
       await updateMonthState(env, month, { status: "approved", at, source: "existing-official-json", commitSha: null }, auth.admin.id);
       return json({ ok: true, month, approved: true, published: false, monthState: { status: "approved", at, source: "existing-official-json", commitSha: null } }, 200, request, env);
     }
-    if (action === "set_auto") { const enabled = body.enabled === true; await setSetting(env, "prayer_schedule_auto_sync", enabled, auth.admin.id); return json({ ok: true, autoSync: enabled }, 200, request, env); }
+    if (action === "set_auto") { const enabled = body.enabled === true; if(enabled && !env.GITHUB_SCHEDULE_TOKEN) return json({error:"GitHub publishing token must be configured before automatic sync can be enabled"},409,request,env); await setSetting(env,"prayer_schedule_auto_sync",enabled,auth.admin.id); return json({ok:true,autoSync:enabled},200,request,env); }
+    if (action === "set_source") {
+      if(typeof body.sourceUrl !== "string") return json({error:"AthanPlus source URL required"},400,request,env);
+      let source: URL; try { source = new URL(body.sourceUrl); } catch { return json({error:"Invalid source URL"},400,request,env); }
+      if(source.protocol!=="https:" || source.hostname!=="timing.athanplus.com" || source.port || source.pathname!=="/masjid/widgets/monthly" || !/^[A-Za-z0-9_-]{4,80}$/.test(source.searchParams.get("masjid_id") || "")) return json({error:"Only AthanPlus monthly timetable URLs are supported"},400,request,env);
+      await setSetting(env,"prayer_schedule_source_url",source.toString(),auth.admin.id);
+      return json({ok:true,sourceUrl:source.toString()},200,request,env);
+    }
+    if (action === "sync_now") {
+      if(!env.GITHUB_SCHEDULE_TOKEN) return json({error:"GitHub publishing token not configured"},409,request,env);
+      await setSetting(env,"prayer_schedule_last_auto",null,auth.admin.id);
+      await autoSyncPrayerSchedule(env,Date.now());
+      const last = await getSetting(env,"prayer_schedule_last_auto",null);
+      return json({ok:true,result:last},200,request,env);
+    }
     if (action === "publish") {
       const monthData = body.prayerTimes ? validateMonthData(month, body.prayerTimes) : (await fetchSourceMonth(env, month)).prayerTimes;
       const schedule = await currentSchedule(env) as Record<string, unknown> & { prayer_times: PrayerTimes }; schedule.prayer_times = { ...schedule.prayer_times, ...monthData };
@@ -152,9 +166,9 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
 }
 
 export async function autoSyncPrayerSchedule(env: Env, scheduledTime: number) {
-  const enabled = await getSetting(env, "prayer_schedule_auto_sync", false); if (!enabled || !env.GITHUB_SCHEDULE_TOKEN) return;
+  const enabled = await getSetting(env, "prayer_schedule_auto_sync", false); if (!enabled) return;
   const now = new Date(scheduledTime); const local = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  const already = await getSetting(env, "prayer_schedule_last_auto", null as null | { checkedDate?: string; month?: string; status?: string }); if (already?.checkedDate === local) return;
+  const already = await getSetting(env, "prayer_schedule_last_auto", null as null | { checkedDate?: string; month?: string; status?: string }); if (already?.checkedDate === local && already.status !== "error") return;
   const [year, month, day] = local.split("-").map(Number); const targetDate = new Date(Date.UTC(year, month - 1 + (day >= 25 ? 1 : 0), 1)); const targetMonth = `${targetDate.getUTCFullYear()}-${String(targetDate.getUTCMonth() + 1).padStart(2, "0")}`;
   try {
     const pulled = await fetchSourceMonth(env, targetMonth); const schedule = await currentSchedule(env) as Record<string, unknown> & { prayer_times: PrayerTimes }; let changed = false;
