@@ -83,6 +83,7 @@ jobs:
           EMAIL_LINK_SECRET: ${{ secrets.EMAIL_LINK_SECRET }}
           ADMIN_BOOTSTRAP_KEY: ${{ secrets.ADMIN_BOOTSTRAP_KEY }}
           EXPO_ACCESS_TOKEN: ${{ secrets.EXPO_ACCESS_TOKEN }}
+          GITHUB_SCHEDULE_TOKEN: ${{ secrets.GITHUB_SCHEDULE_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -110,6 +111,7 @@ jobs:
           put_optional_secret EMAIL_LINK_SECRET "$EMAIL_LINK_SECRET"
           put_optional_secret ADMIN_BOOTSTRAP_KEY "$ADMIN_BOOTSTRAP_KEY"
           put_optional_secret EXPO_ACCESS_TOKEN "$EXPO_ACCESS_TOKEN"
+          put_optional_secret GITHUB_SCHEDULE_TOKEN "$GITHUB_SCHEDULE_TOKEN"
 
       - name: Smoke test Worker, GPS prayer API, activity, CRM runtime, and multiplayer
         run: |
