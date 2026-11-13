@@ -3,7 +3,7 @@ import type { Env, PrayerFile, PrayerKey, PrayerTimes } from "./types";
 
 const DEFAULT_SOURCE = "https://timing.athanplus.com/masjid/widgets/monthly?masjid_id=adJEGWAk&theme=1";
 const DEFAULT_OWNER = "Hassoun911";
-const DEFAULT_REPO = "WOPT";
+const DEFAULT_REPO = "HASSOUN";
 const DEFAULT_PATH = "windsor_islamic_association_2026_prayer_times.json";
 const PRAYERS: PrayerKey[] = ["fajr", "dhuhr", "asr", "maghrib", "isha"];
 type MonthState = { status: "pulled" | "approved"; at: string; source?: string; commitSha?: string | null };
@@ -47,8 +47,15 @@ function parseMonthHtml(html: string, monthKey: string): PrayerTimes {
   return out;
 }
 
-async function fetchSourceMonth(env: Env, monthKey: string) {
-  const base = env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE; const url = new URL(base); url.searchParams.set("date", `${monthKey}-01`);
+async function fetchSourceMonth(env: Env, monthKey: string, requestedSource?: string) {
+  // URL imports must never fetch arbitrary hosts, ports or paths (SSRF protection).
+  const base = requestedSource || env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE;
+  const url = new URL(base);
+  if (url.protocol !== "https:" || url.hostname !== "timing.athanplus.com" || url.port || url.pathname !== "/masjid/widgets/monthly" || !/^[A-Za-z0-9_-]{4,80}$/.test(url.searchParams.get("masjid_id") || "")) {
+    throw new Error("Only AthanPlus monthly mosque timetable HTTPS URLs with a valid masjid_id are supported");
+  }
+  url.searchParams.delete("action");
+  url.searchParams.set("date", `${monthKey}-01`);
   const response = await fetch(url.toString(), { headers: { Accept: "text/html" }, cf: { cacheTtl: 60 } });
   if (!response.ok) throw new Error(`Al-Hijra source returned ${response.status}`);
   return { sourceUrl: url.toString(), prayerTimes: parseMonthHtml(await response.text(), monthKey) };
@@ -118,9 +125,9 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405, request, env);
     const body = await request.json() as Record<string, unknown>; const action = typeof body.action === "string" ? body.action : ""; const month = typeof body.month === "string" && /^\d{4}-\d{2}$/.test(body.month) ? body.month : new Date().toISOString().slice(0, 7);
     if (action === "preview") {
-      const pulled = await fetchSourceMonth(env, month); const at = new Date().toISOString();
-      await updateMonthState(env, month, { status: "pulled", at, source: "Al-Hijra AthanPlus" }, auth.admin.id);
-      return json({ ok: true, month, sourceUrl: pulled.sourceUrl, prayerTimes: pulled.prayerTimes, monthState: { status: "pulled", at, source: "Al-Hijra AthanPlus" } }, 200, request, env);
+      const pulled = await fetchSourceMonth(env, month, typeof body.sourceUrl === "string" ? body.sourceUrl : undefined); const at = new Date().toISOString();
+      await updateMonthState(env, month, { status: "pulled", at, source: pulled.sourceUrl }, auth.admin.id);
+      return json({ ok: true, month, sourceUrl: pulled.sourceUrl, prayerTimes: pulled.prayerTimes, monthState: { status: "pulled", at, source: pulled.sourceUrl } }, 200, request, env);
     }
     if (action === "approve_current") {
       const schedule = await currentSchedule(env);
