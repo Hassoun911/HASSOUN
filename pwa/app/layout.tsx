@@ -55,41 +55,11 @@ const basePath=process.env.NEXT_PUBLIC_BASE_PATH||"";const asset=(path:string)=>
 export const metadata:Metadata={title:"Hassoun",description:"Prayer times, Qur’an reading and audio, Qur’an School, memorization, Qibla, Islamic events and learning tools.",manifest:asset(`/manifest.webmanifest?v=${ICON_VERSION}`),appleWebApp:{capable:true,statusBarStyle:"black-translucent",title:"Hassoun"},other:{"codex-preview":"development"},icons:{icon:[{url:asset(`/hassoun-brand.svg?v=${ICON_VERSION}`),type:"image/svg+xml",sizes:"any"}],shortcut:asset(`/hassoun-brand.svg?v=${ICON_VERSION}`),apple:[{url:asset(`/hassoun-brand.svg?v=${ICON_VERSION}`),type:"image/svg+xml",sizes:"any"}]}};
 export const viewport:Viewport={width:"device-width",initialScale:1,viewportFit:"cover",themeColor:"#0b5b47"};
 
+// TV and tablet displays must only open through their explicit routes.
+// Never redirect the website based on device characteristics or persisted TV preferences.
 const tvBootstrap = `(function(){
-  var KEY='hassoun-web-masjid-tv-mode-v4';
-  var WEBKEY='hassoun-web-force-website-session';
-  var OLDWEBKEY='hassoun-force-web';
-  var TVURL='/masjid-tv/?mode=tv';
   var p=window.location.pathname||'/';
-  var q=window.location.search||'';
   var isTv=p.indexOf('/masjid-tv')!==-1||p.indexOf('/masjid-tv-legacy.html')!==-1;
-  var forceWeb=q.indexOf('mode=web')!==-1;
-  var activate=q.indexOf('activate=1')!==-1;
-  var ua=((navigator.userAgent||'')+' '+(navigator.vendor||'')).toLowerCase();
-  var explicitTv=/smart[- ]?tv|smarttv|hbbtv|netcast|web0s|webos|tizen|vidaa|hisense|viera|aquos|bravia|googletv|google tv|android tv|aftb|aftm|aftt|crkey|roku|tv safari|maple|netcast/.test(ua);
-  var desktop=/windows nt|macintosh|mac os x|x11;/.test(ua);
-  var remoteTv=false;
-  try{
-    var sw=window.screen&&window.screen.width?window.screen.width:window.innerWidth;
-    var sh=window.screen&&window.screen.height?window.screen.height:window.innerHeight;
-    var large=sw>=1000&&sh>=560;
-    var noHover=window.matchMedia?window.matchMedia('(hover: none)').matches:false;
-    var coarse=window.matchMedia?(window.matchMedia('(pointer: coarse)').matches||window.matchMedia('(any-pointer: coarse)').matches):false;
-    remoteTv=!desktop&&large&&(noHover||coarse);
-  }catch(e){}
-  var detectedTv=explicitTv||remoteTv;
-  try{
-    sessionStorage.removeItem(OLDWEBKEY);
-    if(forceWeb){sessionStorage.setItem(WEBKEY,'1');}
-    if(activate){localStorage.setItem(KEY,'enabled');sessionStorage.removeItem(WEBKEY);}
-    if(detectedTv&&!forceWeb){
-      localStorage.setItem(KEY,'enabled');
-      sessionStorage.removeItem(WEBKEY);
-    }
-    if(!isTv&&!forceWeb&&sessionStorage.getItem(WEBKEY)!=='1'&&(detectedTv||localStorage.getItem(KEY)==='enabled')){
-      window.location.replace(TVURL);return;
-    }
-  }catch(e){}
   function fmt(){var d=new Date(),h=d.getHours(),m=d.getMinutes(),s=d.getSeconds(),ap=h>=12?'p.m.':'a.m.';h=h%12||12;return h+':'+(m<10?'0':'')+m+':'+(s<10?'0':'')+s+' '+ap;}
   function updateLocalClock(){
     if(isTv)return;
