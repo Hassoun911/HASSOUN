@@ -126,6 +126,10 @@ jobs:
             sleep 2
           done
 
+          prayer_admin_status="$(curl -sS -o /tmp/prayer-admin.json -w '%{http_code}' "${PUSH_WORKER_URL}/admin/prayer-schedule?month=2026-11")"
+          test "$prayer_admin_status" = "401"
+          jq -e '.error | type == "string"' /tmp/prayer-admin.json >/dev/null
+
           curl -fsS "${PUSH_WORKER_URL}/prayer-times?lat=42.3149&lng=-83.0364&timezone=America%2FToronto&year=2026&month=8" -o /tmp/windsor-prayers.json
           jq -e '.source == "windsor_islamic_association" and (.prayer_times | type == "object") and (.prayer_times | length > 0)' /tmp/windsor-prayers.json >/dev/null
 
