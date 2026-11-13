@@ -40,6 +40,11 @@ export interface SubscriptionRow {
 export interface Env {
   DB: D1Database;
   SCHEDULE_URL: string;
+  ATHANPLUS_MONTHLY_URL?: string;
+  GITHUB_SCHEDULE_TOKEN?: string;
+  GITHUB_SCHEDULE_OWNER?: string;
+  GITHUB_SCHEDULE_REPO?: string;
+  GITHUB_SCHEDULE_PATH?: string;
   ALLOWED_WEB_ORIGIN: string;
   PUBLIC_APP_URL?: string;
   PUBLIC_API_URL?: string;
