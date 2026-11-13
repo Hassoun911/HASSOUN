@@ -147,10 +147,9 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
     }
     if (action === "sync_now") {
       if(!env.GITHUB_SCHEDULE_TOKEN) return json({error:"GitHub publishing token not configured"},409,request,env);
-      await setSetting(env,"prayer_schedule_last_auto",null,auth.admin.id);
-      await autoSyncPrayerSchedule(env,Date.now());
+      await autoSyncPrayerSchedule(env,Date.now(),true);
       const last = await getSetting(env,"prayer_schedule_last_auto",null);
-      return json({ok:true,result:last},200,request,env);
+      return json({ok:last && (last as {status?:string}).status!=="error",result:last},200,request,env);
     }
     if (action === "publish") {
       const monthData = body.prayerTimes ? validateMonthData(month, body.prayerTimes) : (await fetchSourceMonth(env, month)).prayerTimes;
@@ -165,10 +164,10 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
   } catch (error) { return json({ error: error instanceof Error ? error.message : "Prayer schedule request failed" }, 500, request, env); }
 }
 
-export async function autoSyncPrayerSchedule(env: Env, scheduledTime: number) {
-  const enabled = await getSetting(env, "prayer_schedule_auto_sync", false); if (!enabled) return;
+export async function autoSyncPrayerSchedule(env: Env, scheduledTime: number, force = false) {
+  const enabled = await getSetting(env, "prayer_schedule_auto_sync", false); if (!enabled && !force) return;
   const now = new Date(scheduledTime); const local = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  const already = await getSetting(env, "prayer_schedule_last_auto", null as null | { checkedDate?: string; month?: string; status?: string }); if (already?.checkedDate === local && already.status !== "error") return;
+  const already = await getSetting(env, "prayer_schedule_last_auto", null as null | { checkedDate?: string; month?: string; status?: string }); if (!force && already?.checkedDate === local && already.status !== "error") return;
   const [year, month, day] = local.split("-").map(Number); const targetDate = new Date(Date.UTC(year, month - 1 + (day >= 25 ? 1 : 0), 1)); const targetMonth = `${targetDate.getUTCFullYear()}-${String(targetDate.getUTCMonth() + 1).padStart(2, "0")}`;
   try {
     const pulled = await fetchSourceMonth(env, targetMonth); const schedule = await currentSchedule(env) as Record<string, unknown> & { prayer_times: PrayerTimes }; let changed = false;
