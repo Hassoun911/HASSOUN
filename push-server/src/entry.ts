@@ -5,6 +5,7 @@ import { sendAdminTemplateTest } from "./adminEmailTest";
 import { listAskSheikhQuestions, recordAskSheikhQuestion } from "./askSheikh";
 import { finishGameSession } from "./gameHistory";
 import { getLocationPrayerTimes } from "./locationPrayer";
+import { autoSyncPrayerSchedule, handleAdminPrayerSchedule } from "./adminPrayerSchedule";
 import { importLegacyResendUsersOnce } from "./legacyResendImport";
 import { getSponsorLogo } from "./sponsorAsset";
 import type { Env } from "./types";
@@ -56,6 +57,9 @@ export default {
         Vary: "Origin"
       } : {} });
     }
+    if (url.pathname === "/admin/prayer-schedule") {
+      return withCors(request, await handleAdminPrayerSchedule(request, env, url), env);
+    }
     if (request.method === "GET" && url.pathname === "/health") {
       return withCors(request, Response.json({ ok: true, service: "wopt-prayer-push", backendVersion: BACKEND_VERSION }), env);
     }
@@ -105,6 +109,7 @@ export default {
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(importLegacyResendUsersOnce(env));
+    ctx.waitUntil(autoSyncPrayerSchedule(env, controller.scheduledTime));
     return worker.scheduled(controller, env, ctx);
   }
 } satisfies ExportedHandler<Env>;
