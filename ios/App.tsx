@@ -334,6 +334,8 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
       <HomePrayerPanel
         locale={locale}
         today={today}
+        todayKey={todayKey}
+        prayerTimes={prayerTimes}
         next={next}
         preferences={phoneAlertPreferences}
         onTogglePrayer={(prayer) => void togglePrayerAudio(prayer)}
