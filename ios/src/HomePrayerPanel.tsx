@@ -1,8 +1,8 @@
-import { useEffect, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { PrayerAlertPreferences } from "./alertPreferences";
 import { formatPrayerTime } from "./time";
-import { PRAYER_KEYS, type PrayerDay, type PrayerKey } from "./types";
+import { PRAYER_KEYS, type PrayerDay, type PrayerKey, type PrayerTimes } from "./types";
 
 type Locale = "en" | "ar";
 
@@ -16,6 +16,8 @@ type NextPrayer = {
 type Props = {
   locale: Locale;
   today?: PrayerDay;
+  todayKey: string;
+  prayerTimes: PrayerTimes;
   next: NextPrayer | null;
   preferences: PrayerAlertPreferences;
   onTogglePrayer: (prayer: PrayerKey) => void;
@@ -69,7 +71,20 @@ function PrayerIcon({ prayer, active }: { prayer: PrayerKey; active: boolean }) 
   );
 }
 
-export default function HomePrayerPanel({ locale, today, next, preferences, onTogglePrayer, onOpenQibla }: Props) {
+export default function HomePrayerPanel({ locale, today, todayKey, prayerTimes, next, preferences, onTogglePrayer, onOpenQibla }: Props) {
+  const [scheduleMode, setScheduleMode] = useState<"week" | "month" | null>(null);
+  const [periodOffset, setPeriodOffset] = useState(0);
+  const scheduleDays = scheduleMode ? (() => {
+    const base = new Date(todayKey + "T12:00:00Z");
+    if (scheduleMode === "week") base.setUTCDate(base.getUTCDate() + periodOffset * 7);
+    else { base.setUTCDate(1); base.setUTCMonth(base.getUTCMonth() + periodOffset); }
+    const count = scheduleMode === "week" ? 7 : new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0)).getUTCDate();
+    return Array.from({ length: count }, (_, i) => {
+      const day = new Date(base); day.setUTCDate(day.getUTCDate() + i);
+      return { key: day.toISOString().slice(0, 10), date: day.toLocaleDateString(locale === "ar" ? "ar" : "en-CA", { month: "short", day: "numeric", weekday: "short", timeZone: "UTC" }) };
+    });
+  })() : [];
+
   const countdown = next ? timeParts(next.secondsRemaining) : null;
   const urgent = Boolean(next && !next.isTomorrow && next.secondsRemaining > 0 && next.secondsRemaining <= 300);
   const warningPulse = useRef(new Animated.Value(0)).current;
@@ -136,9 +151,47 @@ export default function HomePrayerPanel({ locale, today, next, preferences, onTo
         </Animated.View>
       ) : null}
 
+
+      <Modal transparent animationType="slide" visible={scheduleMode !== null} onRequestClose={() => setScheduleMode(null)}>
+        <View style={calendarStyles.backdrop}>
+          <View style={calendarStyles.sheet}>
+            <View style={calendarStyles.top}>
+              <Text style={calendarStyles.title}>{locale === "ar" ? "مواقيت الصلاة" : "Prayer Schedule"}</Text>
+              <Pressable onPress={() => setScheduleMode(null)} accessibilityRole="button" accessibilityLabel="Close schedule"><Text style={calendarStyles.close}>×</Text></Pressable>
+            </View>
+            <View style={calendarStyles.row}>
+              <Pressable onPress={() => { setScheduleMode("week"); setPeriodOffset(0); }} style={calendarStyles.button}><Text style={calendarStyles.buttonText}>{locale === "ar" ? "الأسبوع" : "Weekly"}</Text></Pressable>
+              <Pressable onPress={() => { setScheduleMode("month"); setPeriodOffset(0); }} style={calendarStyles.button}><Text style={calendarStyles.buttonText}>{locale === "ar" ? "الشهر" : "Monthly"}</Text></Pressable>
+            </View>
+            <View style={calendarStyles.row}>
+              <Pressable onPress={() => setPeriodOffset(x => x - 1)} accessibilityLabel="Previous period"><Text style={calendarStyles.arrow}>‹</Text></Pressable>
+              <Text style={calendarStyles.period}>{scheduleDays.length ? scheduleDays[0].date + " – " + scheduleDays[scheduleDays.length - 1].date : ""}</Text>
+              <Pressable onPress={() => setPeriodOffset(x => x + 1)} accessibilityLabel="Next period"><Text style={calendarStyles.arrow}>›</Text></Pressable>
+            </View>
+            <ScrollView style={{ flex: 1 }}>
+              {scheduleDays.map(item => (
+                <View key={item.key} style={calendarStyles.day}>
+                  <Text style={calendarStyles.date}>{item.date}{item.key === todayKey ? " • Today" : ""}</Text>
+                  <View style={calendarStyles.row}>
+                    {PRAYER_KEYS.map(prayer => <View key={prayer} style={{ flex: 1, alignItems: "center" }}>
+                      <Text style={calendarStyles.prayer}>{NAMES[prayer][locale]}</Text>
+                      <Text style={calendarStyles.time}>{prayerTimes[item.key]?.[prayer] ? formatPrayerTime(prayerTimes[item.key][prayer], locale) : "—"}</Text>
+                    </View>)}
+                  </View>
+                </View>
+              ))}
+              <Text style={calendarStyles.note}>{locale === "ar" ? "— يعني عدم توفر بيانات هذا اليوم." : "— means the day's schedule is unavailable."}</Text>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
       <View style={styles.sectionCard}>
         <View style={styles.sectionHeader}>
           <Text style={styles.heading}>{locale === "ar" ? "مواقيت الصلاة اليوم" : "Today’s Prayer Times"}</Text>
+          <View style={calendarStyles.openRow}>
+            <Pressable accessibilityRole="button" onPress={() => { setScheduleMode("week"); setPeriodOffset(0); }} style={calendarStyles.button}><Text style={calendarStyles.buttonText}>{locale === "ar" ? "عرض الأسبوع" : "Show Weekly"}</Text></Pressable>
+            <Pressable accessibilityRole="button" onPress={() => { setScheduleMode("month"); setPeriodOffset(0); }} style={calendarStyles.button}><Text style={calendarStyles.buttonText}>{locale === "ar" ? "عرض الشهر" : "Show Monthly"}</Text></Pressable>
+          </View>
           <Text style={styles.hint}>{locale === "ar" ? "جميع الصلوات الخمس في مكان واحد" : "All five daily prayers at a glance"}</Text>
         </View>
 
@@ -274,4 +327,23 @@ const styles = StyleSheet.create({
   qiblaBearingValue: { color: deepGreen, fontSize: 14, fontWeight: "900" },
   qiblaBearingDir: { color: "#7e8b86", fontSize: 8, fontWeight: "800" },
   chevron: { color: deepGreen, fontSize: 28 }
+});
+
+const calendarStyles = StyleSheet.create({
+  openRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  button: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: "#a7c8b8", backgroundColor: "#eaf5ee" },
+  buttonText: { fontSize: 12, fontWeight: "800", color: "#075f4a" },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  sheet: { height: "87%", backgroundColor: "#fffdf8", padding: 17, borderTopLeftRadius: 22, borderTopRightRadius: 22 },
+  top: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  title: { fontSize: 20, fontWeight: "900", color: "#034b3d" },
+  close: { fontSize: 28, color: "#034b3d" },
+  row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 7, marginVertical: 9 },
+  arrow: { fontSize: 28, color: "#075f4a", paddingHorizontal: 16 },
+  period: { fontSize: 12, fontWeight: "800", color: "#034b3d", textAlign: "center", flex: 1 },
+  day: { padding: 12, borderWidth: 1, borderColor: "#e0e9e4", borderRadius: 12, backgroundColor: "#fff", marginBottom: 7 },
+  date: { color: "#075f4a", fontWeight: "900", marginBottom: 5 },
+  prayer: { fontSize: 10, color: "#60796b", fontWeight: "700" },
+  time: { fontSize: 10, color: "#173f35", fontWeight: "800", textAlign: "center", marginTop: 4 },
+  note: { textAlign: "center", color: "#7b8984", fontSize: 11, padding: 12 }
 });
