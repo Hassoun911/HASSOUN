@@ -142,6 +142,17 @@ export default function PrayerScheduleAdminPage() {
 
   return (
     <main style={s.page}>
+      <nav aria-label="Admin sections" style={{maxWidth:1200,margin:"0 auto 20px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        {([
+          ["🏠 Dashboard & all controls","/admin"],
+          ["👥 Users","/admin/users"],
+          ["📖 Quran","/admin/quran"],
+          ["🔔 Push","/admin/push"],
+          ["🛠️ Support","/admin/support"],
+          ["⚙️ Settings","/admin/settings"]
+        ] as const).map(([label,href])=><a key={href} href={href} style={{display:"inline-flex",alignItems:"center",minHeight:40,padding:"8px 12px",boxSizing:"border-box",borderRadius:10,background:href==="/admin"?"#0b5b47":"#fff",color:href==="/admin"?"white":"#17483c",border:"1px solid #c7d9d1",fontSize:13,fontWeight:800,textDecoration:"none"}}>{label}</a>)}
+        <a href="/admin/email" style={{display:"inline-flex",alignItems:"center",minHeight:40,padding:"8px 12px",borderRadius:10,boxSizing:"border-box",background:"#fff",color:"#17483c",border:"1px solid #c7d9d1",fontSize:13,fontWeight:800,textDecoration:"none"}}>✉️ Email Center</a>
+      </nav>
       <header style={s.header}>
         <div><div style={s.eyebrow}>HASSOUN ADMIN • PRAYER DATA</div><h1 style={s.h1}>🕌 Windsor Prayer Schedule</h1><p style={s.muted}>Update the official Hassoun Windsor JSON manually or pull the monthly Adhan times from Al-Hijra automatically.</p></div>
       </header>
