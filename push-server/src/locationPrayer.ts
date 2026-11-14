@@ -51,7 +51,12 @@ async function windsorMonth(env: Env, year: number, month: number) {
   if (!response.ok) throw new Error(`Windsor schedule fetch failed: ${response.status}`);
   const data = await response.json() as PrayerFile;
   if (!data.prayer_times) throw new Error("Windsor schedule is invalid");
-  return monthFilter(data.prayer_times, year, month);
+  const monthTimes = monthFilter(data.prayer_times, year, month);
+  if (Object.keys(monthTimes).length === 0) throw new Error(`No published Windsor prayer schedule for ${year}-${String(month).padStart(2, "0")}`);
+  const metadata = (data as PrayerFile & { metadata?: { organization?: string; source_months?: Record<string, {organization?: string}> } }).metadata;
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  const sourceLabel = metadata?.source_months?.[monthKey]?.organization || metadata?.organization || "Windsor official timetable";
+  return { prayerTimes: monthTimes, sourceLabel };
 }
 
 async function globalMonth(env: Env, latitude: number, longitude: number, year: number, month: number, method: number, school: number) {
@@ -93,14 +98,15 @@ export async function getLocationPrayerTimes(url: URL, env: Env) {
   const method = Number.isInteger(methodValue) && methodValue >= 0 && methodValue <= 99 ? methodValue : 3;
   const school = url.searchParams.get("school") === "1" ? 1 : 0;
   const isWindsor = distanceKm(latitude, longitude, WINDSOR.latitude, WINDSOR.longitude) <= WINDSOR_RADIUS_KM;
-  const prayerTimes = isWindsor
-    ? await windsorMonth(env, year, month)
+  const windsor = isWindsor ? await windsorMonth(env, year, month) : null;
+  const prayerTimes = windsor
+    ? windsor.prayerTimes
     : await globalMonth(env, latitude, longitude, year, month, method, school);
 
   return json({
     prayer_times: prayerTimes,
     source: isWindsor ? "windsor_islamic_association" : "aladhan",
-    sourceLabel: isWindsor ? "Windsor Islamic Association" : "Calculated for current GPS location",
+    sourceLabel: windsor ? windsor.sourceLabel : "Calculated for current GPS location",
     location: isWindsor ? { city: "Windsor", region: "Ontario", country: "Canada", label: "Windsor, Ontario" } : { label: "Current location", latitude, longitude },
     latitude,
     longitude,
