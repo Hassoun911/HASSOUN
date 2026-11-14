@@ -12,6 +12,7 @@ type MonthInfo = { month: string; daysOnFile: number; onFile: boolean; status: "
 
 type Status = {
   month: string;
+  currentMonth?: string;
   prayerTimes: PrayerTimes;
   sourceUrl: string;
   scheduleUrl: string;
@@ -62,18 +63,22 @@ export default function PrayerScheduleAdminPage() {
   async function load(target = month) {
     if (!token) { location.replace("/admin/"); return; }
     setBusy("load"); setMessage("");
-    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
+    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); if (data.currentMonth && /^\d{4}-\d{2}$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to load schedule"); }
     finally { setBusy(""); }
   }
   useEffect(() => { void load(month); }, [month]);
-  // Track Windsor's calendar month even if this admin page stays open overnight.
+  // Ask the Worker for the Windsor calendar month while this page is open.
+  // Browser/device clocks can be wrong; do not overwrite the server's month
+  // with a client-side guess. Refreshing this marker doesn't discard edits.
   useEffect(() => {
-    const checkMonth = () => {
-      const now = monthKeyNow();
-      setCurrentMonth(now);
+    const checkServerMonth = async () => {
+      try {
+        const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(monthKeyNow())}`) as Status;
+        if (data.currentMonth && /^\d{4}-\d{2}$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth);
+      } catch { /* Retain the last known month if temporarily offline. */ }
     };
-    const timer = setInterval(checkMonth, 60_000);
+    const timer = setInterval(() => { void checkServerMonth(); }, 15 * 60_000);
     return () => clearInterval(timer);
   }, []);
 
