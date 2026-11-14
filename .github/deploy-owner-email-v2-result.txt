@@ -1,5 +1,5 @@
-deployed_at=2026-11-14T21:13:26Z
-source_commit=0c7cd850a58860ed4be34e65ed2c4900e37b44b6
+deployed_at=2026-11-14T21:26:26Z
+source_commit=1cdd102f36cf9ea5470272d0665cf8f1a41d4661
 worker=passed
 d1_migrations=passed
 admin_crm_build=passed
