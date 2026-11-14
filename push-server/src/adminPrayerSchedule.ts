@@ -116,11 +116,14 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
   const auth = await requireOperator(request, env); if (!auth.admin) return auth.response!;
   try {
     if (request.method === "GET") {
-      const month = url.searchParams.get("month") || new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit" }).format(new Date());
+      const windsorParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", year: "numeric", month: "2-digit" }).formatToParts(new Date());
+      const part = (kind: string) => windsorParts.find(item => item.type === kind)?.value || "";
+      const currentMonth = `${part("year")}-${part("month")}`;
+      const month = url.searchParams.get("month") || currentMonth;
       const schedule = await currentSchedule(env); const monthTimes = monthFromSchedule(schedule, month);
       const configured = Boolean(env.GITHUB_SCHEDULE_TOKEN); const autoSyncRequested = await getSetting(env, "prayer_schedule_auto_sync", false); const autoSync = configured && autoSyncRequested; const lastAuto = await getSetting(env, "prayer_schedule_last_auto", null as null | Record<string, unknown>); const monthStates = await getSetting<MonthStates>(env, "prayer_schedule_month_states", {}); const publishingVerification = configured ? await getSetting(env, "prayer_schedule_publishing_verified", null as null | { at: string; repository: string }) : null;
       const year = Number(month.slice(0, 4)) || new Date().getUTCFullYear();
-      return json({ ok: true, month, prayerTimes: monthTimes, sourceUrl: await getSetting(env, "prayer_schedule_source_url", env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE), scheduleUrl: env.SCHEDULE_URL, autoSync, lastAuto, githubPublishingConfigured: configured, publishingVerification, autoSyncBlocked: autoSyncRequested && !configured, selectedMonthState: monthStates[month] || null, yearOverview: yearOverview(schedule, monthStates, year) }, 200, request, env);
+      return json({ ok: true, month, currentMonth, prayerTimes: monthTimes, sourceUrl: await getSetting(env, "prayer_schedule_source_url", env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE), scheduleUrl: env.SCHEDULE_URL, autoSync, lastAuto, githubPublishingConfigured: configured, publishingVerification, autoSyncBlocked: autoSyncRequested && !configured, selectedMonthState: monthStates[month] || null, yearOverview: yearOverview(schedule, monthStates, year) }, 200, request, env);
     }
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405, request, env);
     const body = await request.json() as Record<string, unknown>; const action = typeof body.action === "string" ? body.action : ""; const month = typeof body.month === "string" && /^\d{4}-\d{2}$/.test(body.month) ? body.month : new Date().toISOString().slice(0, 7);
