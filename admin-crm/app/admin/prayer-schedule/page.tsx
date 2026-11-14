@@ -18,6 +18,7 @@ type Status = {
   autoSync: boolean;
   lastAuto?: { checkedDate?: string; month?: string; status?: string; at?: string; error?: string; commitSha?: string | null } | null;
   githubPublishingConfigured: boolean;
+  autoSyncBlocked?: boolean;
   selectedMonthState?: { status: "approved" | "pulled"; at?: string; source?: string; commitSha?: string | null } | null;
   yearOverview?: MonthInfo[];
 };
@@ -116,6 +117,12 @@ export default function PrayerScheduleAdminPage() {
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to change auto sync"); }
     finally { setBusy(""); }
   }
+  async function checkPublishing() {
+    setBusy("check"); setMessage("");
+    try { const data = await call("/admin/prayer-schedule", { method: "POST", body: JSON.stringify({action:"check_publishing"}) }); setMessage(`GitHub access verified for ${data.repository}. Write permission will be checked when publishing.`); }
+    catch(error) { setMessage(error instanceof Error ? error.message : "GitHub verification failed"); }
+    finally { setBusy(""); }
+  }
   async function saveSource() {
     setBusy("source"); setMessage("");
     try { const data=await call("/admin/prayer-schedule",{method:"POST",body:JSON.stringify({action:"set_source",sourceUrl})}); setSourceUrl(data.sourceUrl); setMessage("Automatic import source saved. Future checks will use this timetable."); }
@@ -151,8 +158,13 @@ export default function PrayerScheduleAdminPage() {
           <button disabled={Boolean(busy)} onClick={() => void preview()} style={s.primary}>{busy === "preview" ? "Pulling…" : "✨ Pull month from Al-Hijra"}</button><p style={s.help}>Pulling marks this month as <strong>Pulled — review</strong>. It is not approved until you publish it.</p>
         </div>
         <div style={s.card}>
-          <div style={s.cardTitle}>Automatic monthly sync</div><div style={s.autoRow}><div><strong>{status?.autoSync ? "ON" : "OFF"}</strong><div style={s.help}>On the 25th and later, Hassoun also checks the next month so the schedule can be ready before month-end.</div></div><button disabled={Boolean(busy)} onClick={() => void setAuto(!status?.autoSync)} style={status?.autoSync ? s.danger : s.secondary}>{status?.autoSync ? "Turn off" : "Turn on"}</button></div>
-          <button disabled={Boolean(busy) || !status?.githubPublishingConfigured} onClick={() => void syncNow()} style={{...s.primary,marginTop:15}}>{busy==="sync"?"Syncing…":"Sync now & publish valid changes"}</button><p style={s.help}>Automatic sync is controlled here in the Admin Center. A full validated month is required; failure retains the existing calendar.</p><div style={s.metaLine}>GitHub publishing: <strong>{status?.githubPublishingConfigured ? "Configured" : "Needs one-time setup"}</strong></div>{status?.lastAuto ? <div style={s.metaBox}><div>Last check: {status.lastAuto.checkedDate || "—"}</div><div>Month: {status.lastAuto.month || "—"}</div><div>Status: {status.lastAuto.status || "—"}</div>{status.lastAuto.error ? <div style={{color:"#9b2c2c"}}>{status.lastAuto.error}</div> : null}</div> : null}
+          <div style={s.cardTitle}>Automatic monthly sync</div><div style={s.autoRow}><div><strong>{!status?.githubPublishingConfigured ? "PAUSED — setup required" : status.autoSync ? "ON" : "OFF"}</strong><div style={s.help}>On the 25th and later, Hassoun also checks the next month so the schedule can be ready before month-end.</div></div><button disabled={Boolean(busy) || !status?.githubPublishingConfigured} onClick={() => void setAuto(!status?.autoSync)} style={status?.autoSync ? s.danger : s.secondary}>{status?.autoSync ? "Turn off" : "Turn on"}</button></div>
+          <button disabled={Boolean(busy) || !status?.githubPublishingConfigured} onClick={() => void syncNow()} style={{...s.primary,marginTop:15}}>{busy==="sync"?"Syncing…":"Sync now & publish valid changes"}</button><p style={s.help}>Automatic sync is controlled here in the Admin Center. A full validated month is required; failure retains the existing calendar.</p><div style={s.metaLine}>GitHub publishing: <strong>{status?.githubPublishingConfigured ? "Token detected — verify access" : "Not connected"}</strong></div>
+          {!status?.githubPublishingConfigured ? <div style={s.warning}><strong>One-time GitHub authorization required.</strong><ol style={{paddingLeft:21,lineHeight:1.65,margin:"8px 0"}}>
+          <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create a fine-grained GitHub token</a> for repository <strong>Hassoun911/HASSOUN</strong>, granting <strong>Contents: Read and write</strong>.</li>
+          <li>Save it as repository Actions secret <code>GITHUB_SCHEDULE_TOKEN</code> in <a href="https://github.com/Hassoun911/HASSOUN/settings/secrets/actions" target="_blank" rel="noopener noreferrer">HASSOUN → Settings → Actions secrets</a>.</li>
+          <li>Run <a href="https://github.com/Hassoun911/HASSOUN/actions/workflows/deploy-push-worker.yml" target="_blank" rel="noopener noreferrer">Deploy Hassoun Push Worker</a> on branch <code>work/hassoun-1.0-store-admin</code> to install the secret, then reload and turn automatic sync on.</li>
+          </ol><div style={s.help}>Keep the token in GitHub Secrets only. Never paste it into this page or chat.</div></div> : <button disabled={Boolean(busy)} onClick={() => void checkPublishing()} style={{...s.secondary,marginTop:10,width:"100%"}}>{busy==="check"?"Checking GitHub access…":"Verify GitHub authorization"}</button>}{status?.lastAuto ? <div style={s.metaBox}><div>Last check: {status.lastAuto.checkedDate || "—"}</div><div>Month: {status.lastAuto.month || "—"}</div><div>Status: {status.lastAuto.status || "—"}</div>{status.lastAuto.error ? <div style={{color:"#9b2c2c"}}>{status.lastAuto.error}</div> : null}</div> : null}
         </div>
       </section>
 
@@ -160,7 +172,7 @@ export default function PrayerScheduleAdminPage() {
 
       <section style={s.tableCard}>
         <div style={s.tableHead}><div><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}><div style={s.cardTitle}>{month} prayer times</div><span style={{...s.selectedBadge,...statusStyle(selectedInfo)}}>{statusLabel(selectedInfo)}</span></div><div style={s.help}>{rowCount} days loaded • times are 24-hour Windsor local time{dirty ? " • unsaved edits" : ""}</div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={Boolean(busy)} onClick={() => void load(month)} style={s.secondary}>Reload current</button><button disabled={Boolean(busy) || !rowCount || selectedInfo?.status === "approved" && !dirty} onClick={() => void approveOrPublish()} style={s.publish}>{actionLabel}</button></div></div>
-        {!status?.githubPublishingConfigured ? <div style={s.warning}><strong>GitHub publishing is not configured yet.</strong> Months already stored in the official JSON can still be approved here. Only pulled changes or manual edits require the <code>GITHUB_SCHEDULE_TOKEN</code> before they can be published.</div> : null}
+        {!status?.githubPublishingConfigured ? <div style={s.warning}><strong>GitHub publishing is not connected yet.</strong> Months already stored in the official JSON can still be approved here. Only pulled changes or manual edits require the <code>GITHUB_SCHEDULE_TOKEN</code> before they can be published.</div> : null}
         {needsPublish && !status?.githubPublishingConfigured ? <div style={s.warning}><strong>Publish required:</strong> this month contains pulled or edited data that has not been written to the official JSON yet.</div> : null}
         <div style={{overflowX:"auto"}}><table style={s.table}><thead><tr><th style={s.th}>Date</th>{PRAYERS.map((p) => <th key={p} style={s.th}>{labelPrayer(p)}</th>)}</tr></thead><tbody>{dates.map((date) => <tr key={date}><td style={s.dateCell}>{date}</td>{PRAYERS.map((p) => <td key={p} style={s.td}><input aria-label={`${date} ${p}`} value={rows[date]?.[p] || ""} onChange={(e) => edit(date, p, e.target.value)} style={s.timeInput} /></td>)}</tr>)}</tbody></table></div>
       </section>
