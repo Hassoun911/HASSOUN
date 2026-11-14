@@ -33,15 +33,15 @@ function to24(value: string, prayer: PrayerKey) {
 function daysInMonth(year: number, month: number) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }
 
 function parseMonthHtml(html: string, monthKey: string): PrayerTimes {
-  const [year, month] = monthKey.split("-").map(Number); if (!year || !month || month < 1 || month > 12) throw new Error("Invalid month");
+  const [year = 0, month = 0] = monthKey.split("-").map(Number); if (!year || !month || month < 1 || month > 12) throw new Error("Invalid month");
   const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]; const out: PrayerTimes = {};
   for (const row of rows) {
-    const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) => cleanCell(m[1]));
+    const cells = [...(row[1] || "").matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) => cleanCell(m[1] || ""));
     if (cells.length < 9) continue; const day = Number(cells[0]);
     if (!Number.isInteger(day) || day < 1 || day > daysInMonth(year, month)) continue;
-    const weekday = new Intl.DateTimeFormat("en-US", { timeZone:"UTC", weekday:"short" }).format(new Date(Date.UTC(year, month-1, day))).toUpperCase(); if(cells[2].slice(0,3).toUpperCase()!==weekday) continue;
+    const weekday = new Intl.DateTimeFormat("en-US", { timeZone:"UTC", weekday:"short" }).format(new Date(Date.UTC(year, month-1, day))).toUpperCase(); if((cells[2] || "").slice(0,3).toUpperCase()!==weekday) continue;
     const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    if(out[key]) throw new Error("Duplicate prayer date "+key); const parsed = { fajr: to24(cells[3], "fajr"), dhuhr: to24(cells[5], "dhuhr"), asr: to24(cells[6], "asr"), maghrib: to24(cells[7], "maghrib"), isha: to24(cells[8], "isha") }; const mins = PRAYERS.map(p => { const [h,m] = parsed[p].split(":").map(Number); return h*60+m; }); if(mins.some((v,i)=>i>0&&v<=mins[i-1])) throw new Error("Invalid prayer order "+key); out[key]=parsed;
+    if(out[key]) throw new Error("Duplicate prayer date "+key); const parsed = { fajr: to24(cells[3] || "", "fajr"), dhuhr: to24(cells[5] || "", "dhuhr"), asr: to24(cells[6] || "", "asr"), maghrib: to24(cells[7] || "", "maghrib"), isha: to24(cells[8] || "", "isha") }; const mins = PRAYERS.map(p => { const [h = 0,m = 0] = parsed[p].split(":").map(Number); return h*60+m; }); if(mins.some((v,i)=>i>0&&v<=(mins[i-1] ?? -1))) throw new Error("Invalid prayer order "+key); out[key]=parsed;
   }
   const expected = daysInMonth(year, month); if (Object.keys(out).length !== expected) throw new Error(`Expected ${expected} prayer rows for ${monthKey}, found ${Object.keys(out).length}`);
   return out;
@@ -69,7 +69,7 @@ async function currentSchedule(env: Env): Promise<PrayerFile & Record<string, un
 
 function validateMonthData(monthKey: string, value: unknown): PrayerTimes {
   if (!value || typeof value !== "object") throw new Error("Prayer month data is required");
-  const [year, month] = monthKey.split("-").map(Number); const expected = daysInMonth(year, month); const input = value as Record<string, unknown>; const out: PrayerTimes = {};
+  const [year = 0, month = 0] = monthKey.split("-").map(Number); if(!year || month < 1 || month > 12) throw new Error("Invalid month"); const expected = daysInMonth(year, month); const input = value as Record<string, unknown>; const out: PrayerTimes = {};
   for (let day = 1; day <= expected; day += 1) {
     const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`; const row = input[key] as Record<string, unknown> | undefined; if (!row) throw new Error(`Missing ${key}`);
     const normalized = {} as Record<PrayerKey, string>;
@@ -168,7 +168,7 @@ export async function autoSyncPrayerSchedule(env: Env, scheduledTime: number, fo
   const enabled = await getSetting(env, "prayer_schedule_auto_sync", false); if (!enabled && !force) return;
   const now = new Date(scheduledTime); const local = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
   const already = await getSetting(env, "prayer_schedule_last_auto", null as null | { checkedDate?: string; month?: string; status?: string }); if (!force && already?.checkedDate === local && already.status !== "error") return;
-  const [year, month, day] = local.split("-").map(Number); const targetDate = new Date(Date.UTC(year, month - 1 + (day >= 25 ? 1 : 0), 1)); const targetMonth = `${targetDate.getUTCFullYear()}-${String(targetDate.getUTCMonth() + 1).padStart(2, "0")}`;
+  const [year = 0, month = 0, day = 0] = local.split("-").map(Number); const targetDate = new Date(Date.UTC(year, month - 1 + (day >= 25 ? 1 : 0), 1)); const targetMonth = `${targetDate.getUTCFullYear()}-${String(targetDate.getUTCMonth() + 1).padStart(2, "0")}`;
   try {
     const pulled = await fetchSourceMonth(env, targetMonth); const schedule = await currentSchedule(env) as Record<string, unknown> & { prayer_times: PrayerTimes }; let changed = false;
     for (const [date, row] of Object.entries(pulled.prayerTimes)) if (JSON.stringify(schedule.prayer_times[date]) !== JSON.stringify(row)) { changed = true; break; }
