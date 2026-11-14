@@ -71,10 +71,7 @@ export default function PrayerScheduleAdminPage() {
   useEffect(() => {
     const checkMonth = () => {
       const now = monthKeyNow();
-      setCurrentMonth(previous => {
-        if (previous !== now) setMonth(selected => selected === previous ? now : selected);
-        return now;
-      });
+      setCurrentMonth(now);
     };
     const timer = setInterval(checkMonth, 60_000);
     return () => clearInterval(timer);
