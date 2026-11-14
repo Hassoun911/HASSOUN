@@ -19,6 +19,7 @@ type Status = {
   lastAuto?: { checkedDate?: string; month?: string; status?: string; at?: string; error?: string; commitSha?: string | null } | null;
   githubPublishingConfigured: boolean;
   autoSyncBlocked?: boolean;
+  publishingVerification?: { at: string; repository: string } | null;
   selectedMonthState?: { status: "approved" | "pulled"; at?: string; source?: string; commitSha?: string | null } | null;
   yearOverview?: MonthInfo[];
 };
@@ -119,7 +120,7 @@ export default function PrayerScheduleAdminPage() {
   }
   async function checkPublishing() {
     setBusy("check"); setMessage("");
-    try { const data = await call("/admin/prayer-schedule", { method: "POST", body: JSON.stringify({action:"check_publishing"}) }); setMessage(`GitHub access verified for ${data.repository}. Write permission will be checked when publishing.`); }
+    try { const data = await call("/admin/prayer-schedule", { method: "POST", body: JSON.stringify({action:"check_publishing"}) }); setStatus(old=>old?{...old,publishingVerification:{at:data.verifiedAt,repository:data.repository}}:old); setMessage(`GitHub access verified for ${data.repository}. Write permission will be checked when publishing.`); }
     catch(error) { setMessage(error instanceof Error ? error.message : "GitHub verification failed"); }
     finally { setBusy(""); }
   }
@@ -159,12 +160,15 @@ export default function PrayerScheduleAdminPage() {
         </div>
         <div style={s.card}>
           <div style={s.cardTitle}>Automatic monthly sync</div><div style={s.autoRow}><div><strong>{!status?.githubPublishingConfigured ? "PAUSED — setup required" : status.autoSync ? "ON" : "OFF"}</strong><div style={s.help}>On the 25th and later, Hassoun also checks the next month so the schedule can be ready before month-end.</div></div><button disabled={Boolean(busy) || !status?.githubPublishingConfigured} onClick={() => void setAuto(!status?.autoSync)} style={status?.autoSync ? s.danger : s.secondary}>{status?.autoSync ? "Turn off" : "Turn on"}</button></div>
-          <button disabled={Boolean(busy) || !status?.githubPublishingConfigured} onClick={() => void syncNow()} style={{...s.primary,marginTop:15}}>{busy==="sync"?"Syncing…":"Sync now & publish valid changes"}</button><p style={s.help}>Automatic sync is controlled here in the Admin Center. A full validated month is required; failure retains the existing calendar.</p><div style={s.metaLine}>GitHub publishing: <strong>{status?.githubPublishingConfigured ? "Token detected — verify access" : "Not connected"}</strong></div>
+          <button disabled={Boolean(busy) || !status?.githubPublishingConfigured} onClick={() => void syncNow()} style={{...s.primary,marginTop:15}}>{busy==="sync"?"Syncing…":"Sync now & publish valid changes"}</button><p style={s.help}>Automatic sync is controlled here in the Admin Center. A full validated month is required; failure retains the existing calendar.</p><div style={s.metaLine}>GitHub publishing: <strong>{status?.publishingVerification ? "GitHub access verified" : status?.githubPublishingConfigured ? "Token detected — verify access" : "Not connected"}</strong></div>
           {!status?.githubPublishingConfigured ? <div style={s.warning}><strong>One-time GitHub authorization required.</strong><ol style={{paddingLeft:21,lineHeight:1.65,margin:"8px 0"}}>
           <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create a fine-grained GitHub token</a> for repository <strong>Hassoun911/HASSOUN</strong>, granting <strong>Contents: Read and write</strong>.</li>
           <li>Save it as repository Actions secret <code>GITHUB_SCHEDULE_TOKEN</code> in <a href="https://github.com/Hassoun911/HASSOUN/settings/secrets/actions" target="_blank" rel="noopener noreferrer">HASSOUN → Settings → Actions secrets</a>.</li>
           <li>Run <a href="https://github.com/Hassoun911/HASSOUN/actions/workflows/deploy-push-worker.yml" target="_blank" rel="noopener noreferrer">Deploy Hassoun Push Worker</a> on branch <code>work/hassoun-1.0-store-admin</code> to install the secret, then reload and turn automatic sync on.</li>
-          </ol><div style={s.help}>Keep the token in GitHub Secrets only. Never paste it into this page or chat.</div></div> : <button disabled={Boolean(busy)} onClick={() => void checkPublishing()} style={{...s.secondary,marginTop:10,width:"100%"}}>{busy==="check"?"Checking GitHub access…":"Verify GitHub authorization"}</button>}{status?.lastAuto ? <div style={s.metaBox}><div>Last check: {status.lastAuto.checkedDate || "—"}</div><div>Month: {status.lastAuto.month || "—"}</div><div>Status: {status.lastAuto.status || "—"}</div>{status.lastAuto.error ? <div style={{color:"#9b2c2c"}}>{status.lastAuto.error}</div> : null}</div> : null}
+          </ol><div style={s.help}>Keep the token in GitHub Secrets only. Never paste it into this page or chat.</div></div> : <button disabled={Boolean(busy)} onClick={() => void checkPublishing()} style={{...s.secondary,marginTop:10,width:"100%"}}>{busy==="check"?"Checking GitHub access…":"Verify GitHub authorization"}</button>}{status?.publishingVerification ? <div style={{...s.metaBox,color:"#17633d",background:"#e9f7ef"}}>✓ GitHub access verified for {status.publishingVerification.repository}.<div style={{fontSize:12}}>Verified {new Date(status.publishingVerification.at).toLocaleString()} · Write access is verified when publishing.</div></div> : null}
+          {status?.lastAuto?.status === "blocked" && status?.githubPublishingConfigured
+            ? <div style={s.metaBox}><strong>Previous sync check — before GitHub authorization</strong><div>The old “blocked” result is historical. GitHub credentials are now installed; the next scheduled sync will replace this status.</div></div>
+            : status?.lastAuto ? <div style={s.metaBox}><div>Last check: {status.lastAuto.checkedDate || "—"}</div><div>Month: {status.lastAuto.month || "—"}</div><div>Status: {status.lastAuto.status || "—"}</div>{status.lastAuto.error ? <div style={{color:"#9b2c2c"}}>{status.lastAuto.error}</div> : null}</div> : null}
         </div>
       </section>
 
