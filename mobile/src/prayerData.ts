@@ -41,6 +41,7 @@ const LEGACY_CACHE_KEY = "hassoun:prayer-context:v3";
 const GPS_TIMEOUT_MS = 7000;
 const API_TIMEOUT_MS = 7000;
 const GEOCODE_TIMEOUT_MS = 2500;
+const OFFICIAL_WINDSOR_URL = "https://raw.githubusercontent.com/Hassoun911/HASSOUN/main/windsor_islamic_association_2026_prayer_times.json";
 
 function timeout<T>(promise: Promise<T>, ms: number, code: string): Promise<T> {
   return Promise.race([
@@ -310,6 +311,27 @@ export async function previewPrayerDayForPreferences(preferences: PrayerCalculat
   return { asr: day?.asr, source: `${preferences.school === 1 ? "Hanafi" : "Standard"} Asr · local instant calculation` };
 }
 
+async function fetchOfficialWindsorSchedule(): Promise<PrayerTimes> {
+  // GitHub's published timetable is the shared source used by the website and Windsor backend.
+  // The bundled timetable remains an offline fallback, never the first online choice.
+  const response = await timeout(fetch(OFFICIAL_WINDSOR_URL + "?t=" + Date.now(), { headers: { Accept: "application/json" }, cache: "no-store" }), API_TIMEOUT_MS, "WINDSOR_SCHEDULE_TIMEOUT");
+  if (!response.ok) throw new Error("WINDSOR_SCHEDULE_UNAVAILABLE");
+  const payload = await response.json() as Partial<PrayerFile>;
+  if (!payload.prayer_times || typeof payload.prayer_times !== "object") throw new Error("WINDSOR_SCHEDULE_INVALID");
+  const data = payload.prayer_times;
+  const required = ["fajr","dhuhr","asr","maghrib","isha"] as const;
+  const valid = Object.entries(data).filter(([date,row]) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(date) && row && required.every(prayer => {
+      const value = row[prayer];
+      if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return false;
+      const [hour = 99, minute = 99] = value.split(":").map(Number);
+      return hour < 24 && minute < 60;
+    })
+  );
+  if (valid.length < 28 || valid.length !== Object.keys(data).length) throw new Error("WINDSOR_SCHEDULE_INCOMPLETE");
+  return data;
+}
+
 function windsorFallback(): LoadedPrayerTimes {
   const prayerTimes = (bundledSchedule as PrayerFile).prayer_times;
   return {
@@ -361,14 +383,27 @@ export async function loadPrayerTimes(options: { forceLocation?: boolean } = {})
     const shouldUseOfficialWindsor = nearWindsor && preferences.scheduleSource !== "calculated";
 
     if (shouldUseOfficialWindsor) {
+      // Do not overwrite a previously downloaded, valid Windsor timetable with the
+      // older packaged file whenever a user is temporarily offline.
+      const cachedWindsor = saved && isNearWindsor(saved.location.latitude, saved.location.longitude)
+        && saved.location.source !== "aladhan" && saved.location.source !== "local_calculation"
+        ? saved.prayerTimes : null;
+      let prayerTimes: PrayerTimes;
+      let live = false;
+      try {
+        prayerTimes = await fetchOfficialWindsorSchedule();
+        live = true;
+      } catch {
+        prayerTimes = cachedWindsor || (bundledSchedule as PrayerFile).prayer_times;
+      }
       const context: LoadedPrayerTimes = {
-        prayerTimes: (bundledSchedule as PrayerFile).prayer_times,
-        live: true,
+        prayerTimes,
+        live,
         location: { latitude, longitude, timezone: WINDSOR_TIME_ZONE, label: CITY_LABEL, source: "windsor_islamic_association" },
         calculationMethod: null,
         calculatedAt: new Date().toISOString()
       };
-      await saveContext(context);
+      if (live || !cachedWindsor) await saveContext(context);
       return context;
     }
 
