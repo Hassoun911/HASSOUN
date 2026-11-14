@@ -21,7 +21,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
-const DATA_URL = "https://raw.githubusercontent.com/Hassoun911/WOPT/main/windsor_islamic_association_2026_prayer_times.json";
+const DATA_URL = "https://raw.githubusercontent.com/Hassoun911/HASSOUN/main/windsor_islamic_association_2026_prayer_times.json";
 const TIMEZONE = "America/Toronto";
 const prayerOrder: PrayerKey[] = ["fajr", "dhuhr", "asr", "maghrib", "isha"];
 
