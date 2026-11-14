@@ -46,6 +46,7 @@ function statusStyle(item?: MonthInfo | null): React.CSSProperties {
 
 export default function PrayerScheduleAdminPage() {
   const [month, setMonth] = useState(monthKeyNow());
+  const [currentMonth, setCurrentMonth] = useState(monthKeyNow());
   const [sourceUrl, setSourceUrl] = useState("https://timing.athanplus.com/masjid/widgets/monthly?masjid_id=adJEGWAk&theme=1");
   const [rows, setRows] = useState<PrayerTimes>({});
   const [status, setStatus] = useState<Status | null>(null);
@@ -66,6 +67,18 @@ export default function PrayerScheduleAdminPage() {
     finally { setBusy(""); }
   }
   useEffect(() => { void load(month); }, [month]);
+  // Track Windsor's calendar month even if this admin page stays open overnight.
+  useEffect(() => {
+    const checkMonth = () => {
+      const now = monthKeyNow();
+      setCurrentMonth(previous => {
+        if (previous !== now) setMonth(selected => selected === previous ? now : selected);
+        return now;
+      });
+    };
+    const timer = setInterval(checkMonth, 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const dates = useMemo(() => Object.keys(rows).sort(), [rows]);
   const rowCount = dates.length;
@@ -159,7 +172,14 @@ export default function PrayerScheduleAdminPage() {
 
       <section style={s.yearCard}>
         <div style={s.yearHead}><div><div style={s.cardTitle}>{month.slice(0,4)} month status</div><div style={s.help}>See what is already stored, what has been pulled for review, and what has been approved.</div></div><div style={s.legend}><span style={{...s.legendItem,...statusStyle({onFile:true,status:"approved"} as MonthInfo)}}>✓ Approved</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"pulled"} as MonthInfo)}}>Pulled — review</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"not-approved"} as MonthInfo)}}>On file — not approved</span><span style={{...s.legendItem,...statusStyle(null)}}>Missing</span></div></div>
-        <div style={s.monthGrid}>{(status?.yearOverview || []).map((item) => <button key={item.month} onClick={() => setMonth(item.month)} style={{...s.monthTile,...statusStyle(item),...(item.month===month?s.monthSelected:{})}}><strong>{monthName(item.month)}</strong><span style={s.monthStatus}>{statusLabel(item)}</span><small>{item.daysOnFile ? `${item.daysOnFile} days in JSON` : "No schedule"}</small></button>)}</div>
+        <div style={s.monthGrid}>{[...(status?.yearOverview || [])].sort((a,b)=>a.month===currentMonth?-1:b.month===currentMonth?1:a.month.localeCompare(b.month)).map((item) => {
+          const isCurrent = item.month === currentMonth;
+          const isSelected = item.month === month;
+          return <button key={item.month} onClick={() => setMonth(item.month)} aria-current={isCurrent?"date":undefined} aria-pressed={isSelected} style={{...s.monthTile,...statusStyle(item),...(isCurrent?{border:"2px solid #08765d",boxShadow:"0 0 0 2px rgba(8,118,93,.13)",background:item.onFile?"#dff4e9":"#fff3dd"}:{}),...(isSelected?s.monthSelected:{})}}>
+            <strong style={{display:"flex",justifyContent:"space-between",gap:5,alignItems:"center"}}>{monthName(item.month)}{isCurrent?<span style={{fontSize:10,color:"#086149",fontWeight:900}}>● CURRENT</span>:null}</strong>
+            <span style={s.monthStatus}>{statusLabel(item)}</span><small>{item.daysOnFile ? `${item.daysOnFile} days in JSON` : "No schedule"}</small>
+          </button>;
+        })}</div>
       </section>
 
       <section style={s.grid}>
