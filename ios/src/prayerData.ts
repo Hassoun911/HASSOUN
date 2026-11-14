@@ -139,16 +139,24 @@ export async function loadPrayerTimes(): Promise<LoadedPrayerTimes> {
     const latitude = position.coords.latitude;
     const longitude = position.coords.longitude;
     const months = monthPair(timezone);
-    const [current, next] = await Promise.all(months.map(({ year, month }) => fetchMonth(latitude, longitude, timezone, year, month)));
-    const prayerTimes = mergePrayerTimes(current.prayer_times || {}, next.prayer_times || {});
-    const apiLabel = current.location?.label && current.location.label !== "Current location" ? current.location.label : null;
+    // The published Windsor schedule is authoritative. If the next month has
+    // not been published yet, keep the current month live instead of discarding
+    // valid data and falling back to an older bundled schedule.
+    const [current, next] = await Promise.allSettled(months.map(({ year, month }) => fetchMonth(latitude, longitude, timezone, year, month)));
+    if (current.status !== "fulfilled" || !current.value.prayer_times || !Object.keys(current.value.prayer_times).length) {
+      throw new Error("Current prayer month unavailable");
+    }
+    const currentData = current.value;
+    const nextData = next.status === "fulfilled" ? next.value.prayer_times || {} : {};
+    const prayerTimes = mergePrayerTimes(currentData.prayer_times, nextData);
+    const apiLabel = currentData.location?.label && currentData.location.label !== "Current location" ? current.location.label : null;
     const label = apiLabel || await locationLabel(latitude, longitude);
     const location: PrayerLocation = {
       latitude,
       longitude,
       timezone,
-      label: current.source === "windsor_islamic_association" && label === "Current location" ? "Windsor, Ontario" : label,
-      source: current.source || "aladhan"
+      label: currentData.source === "windsor_islamic_association" && label === "Current location" ? "Windsor, Ontario" : label,
+      source: currentData.source || "aladhan"
     };
     await AsyncStorage.setItem(STORAGE_KEYS.locationSchedule, JSON.stringify({ prayerTimes, location, savedAt: new Date().toISOString() } satisfies CachedLocationPayload));
     return { prayerTimes, live: true, location };
