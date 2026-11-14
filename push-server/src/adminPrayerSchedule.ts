@@ -118,9 +118,9 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
     if (request.method === "GET") {
       const month = url.searchParams.get("month") || new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit" }).format(new Date());
       const schedule = await currentSchedule(env); const monthTimes = monthFromSchedule(schedule, month);
-      const configured = Boolean(env.GITHUB_SCHEDULE_TOKEN); const autoSyncRequested = await getSetting(env, "prayer_schedule_auto_sync", false); const autoSync = configured && autoSyncRequested; const lastAuto = await getSetting(env, "prayer_schedule_last_auto", null as null | Record<string, unknown>); const monthStates = await getSetting<MonthStates>(env, "prayer_schedule_month_states", {});
+      const configured = Boolean(env.GITHUB_SCHEDULE_TOKEN); const autoSyncRequested = await getSetting(env, "prayer_schedule_auto_sync", false); const autoSync = configured && autoSyncRequested; const lastAuto = await getSetting(env, "prayer_schedule_last_auto", null as null | Record<string, unknown>); const monthStates = await getSetting<MonthStates>(env, "prayer_schedule_month_states", {}); const publishingVerification = configured ? await getSetting(env, "prayer_schedule_publishing_verified", null as null | { at: string; repository: string }) : null;
       const year = Number(month.slice(0, 4)) || new Date().getUTCFullYear();
-      return json({ ok: true, month, prayerTimes: monthTimes, sourceUrl: await getSetting(env, "prayer_schedule_source_url", env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE), scheduleUrl: env.SCHEDULE_URL, autoSync, lastAuto, githubPublishingConfigured: configured, autoSyncBlocked: autoSyncRequested && !configured, selectedMonthState: monthStates[month] || null, yearOverview: yearOverview(schedule, monthStates, year) }, 200, request, env);
+      return json({ ok: true, month, prayerTimes: monthTimes, sourceUrl: await getSetting(env, "prayer_schedule_source_url", env.ATHANPLUS_MONTHLY_URL || DEFAULT_SOURCE), scheduleUrl: env.SCHEDULE_URL, autoSync, lastAuto, githubPublishingConfigured: configured, publishingVerification, autoSyncBlocked: autoSyncRequested && !configured, selectedMonthState: monthStates[month] || null, yearOverview: yearOverview(schedule, monthStates, year) }, 200, request, env);
     }
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405, request, env);
     const body = await request.json() as Record<string, unknown>; const action = typeof body.action === "string" ? body.action : ""; const month = typeof body.month === "string" && /^\d{4}-\d{2}$/.test(body.month) ? body.month : new Date().toISOString().slice(0, 7);
@@ -151,7 +151,9 @@ export async function handleAdminPrayerSchedule(request: Request, env: Env, url:
       const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=main`;
       const response = await fetch(url, { headers: { Authorization: `Bearer ${env.GITHUB_SCHEDULE_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "Hassoun-Prayer-Schedule-Admin", "X-GitHub-Api-Version": "2022-11-28" } });
       if (!response.ok) return json({ ok: false, configured: true, error: `GitHub credential check failed (${response.status}). Confirm repository access and permissions.` }, 502, request, env);
-      return json({ ok: true, configured: true, repository: `${owner}/${repo}`, path, note: "Read access verified; write permission is checked when publishing." }, 200, request, env);
+      const verifiedAt = new Date().toISOString();
+      await setSetting(env, "prayer_schedule_publishing_verified", { at: verifiedAt, repository: `${owner}/${repo}` }, auth.admin.id);
+      return json({ ok: true, configured: true, verifiedAt, repository: `${owner}/${repo}`, path, note: "Read access verified; write permission is checked when publishing." }, 200, request, env);
     }
     if (action === "sync_now") {
       if(!env.GITHUB_SCHEDULE_TOKEN) return json({error:"GitHub publishing token not configured"},409,request,env);
