@@ -2,7 +2,7 @@ name: Deploy Hassoun PWA
 
 on:
   push:
-    branches: [main, work/hassoun-1.0-store-admin]
+    branches: [main]
     paths:
       - "pwa/**"
       - ".github/workflows/deploy-pages.yml"
