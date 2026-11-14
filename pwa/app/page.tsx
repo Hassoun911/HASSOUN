@@ -12,7 +12,7 @@ type AlertPreferences = Record<AlertKind, boolean>;
 type ThemePreference = "system" | "light" | "dark";
 
 interface PrayerFile {
-  metadata?: { year?: number; source_page?: string };
+  metadata?: { year?: number; source_page?: string; organization?: string; source_months?: Record<string, { organization?: string }> };
   prayer_times: PrayerTimes;
 }
 
@@ -284,6 +284,8 @@ export default function Home() {
   const [selectedDate, setSelectedDate] = useState(() => windsorDateKey());
   const [prayerTimes, setPrayerTimes] = useState<PrayerTimes>(fallbackTimes);
   const [isLive, setIsLive] = useState(false);
+  const [sourceByMonth, setSourceByMonth] = useState<Record<string,string>>({});
+  const [defaultScheduleSource, setDefaultScheduleSource] = useState("Windsor published timetable");
   const [locale, setLocale] = useState<"en" | "ar">("en");
   const [sheet, setSheet] = useState<Sheet>(null);
   const [alertPreferences, setAlertPreferences] = useState<AlertPreferences>({ twenty: false, ten: false, prayer: false });
@@ -338,6 +340,8 @@ export default function Home() {
       .then((data) => {
         if (data.prayer_times) {
           setPrayerTimes(data.prayer_times);
+          setDefaultScheduleSource(data.metadata?.organization || "Windsor published timetable");
+          setSourceByMonth(Object.fromEntries(Object.entries(data.metadata?.source_months || {}).map(([month,source]) => [month,source.organization || "Windsor published timetable"])));
           setIsLive(true);
           setLastSync(new Date().toISOString());
           window.localStorage.setItem("wpt-prayer-times", JSON.stringify(data.prayer_times));
@@ -448,6 +452,7 @@ export default function Home() {
   const selectedTimes = prayerTimes[selectedDate] ?? fallbackTimes["2026-08-13"];
   const displayDate = new Date(`${selectedDate}T12:00:00`);
   const t = labels[locale];
+  const selectedSourceLabel = sourceByMonth[selectedDate.slice(0,7)] || defaultScheduleSource;
 
   const nextPrayer = (() => {
     if (selectedDate !== todayKey) {
@@ -519,6 +524,8 @@ export default function Home() {
       const data = await response.json() as PrayerFile;
       if (!data.prayer_times) throw new Error("Prayer schedule missing");
       setPrayerTimes(data.prayer_times);
+      setDefaultScheduleSource(data.metadata?.organization || "Windsor published timetable");
+      setSourceByMonth(Object.fromEntries(Object.entries(data.metadata?.source_months || {}).map(([month,source]) => [month,source.organization || "Windsor published timetable"])));
       setIsLive(true);
       setLastSync(new Date().toISOString());
       window.localStorage.setItem("wpt-prayer-times", JSON.stringify(data.prayer_times));
@@ -609,7 +616,7 @@ export default function Home() {
             <div className="countdown-divider" />
             <div><span>{t.remaining}</span><strong className="countdown">{selectedDate === todayKey ? humanCountdown(nextPrayer.seconds, locale) : "—"}</strong></div>
           </div>
-          <p className="source-note"><span /> {t.source}</p>
+          <p className="source-note"><span /> {selectedSourceLabel} · {locale === "ar" ? "وقت الأذان" : "Adhan time"}</p>
         </article>
       </section>
 
