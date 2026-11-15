@@ -1,13 +1,10 @@
 name: Build + TestFlight Hassoun iOS v1.0.2 Android v62 Parity
 
 on:
+  # Kept as a manual legacy workflow only: its historical Android-v62
+  # source transformation is incompatible with the current iOS branch.
+  # Current release builds use build-ios-current-windsor-adhan.yml.
   workflow_dispatch:
-  push:
-    branches:
-      - release/ios-current
-    paths:
-      - '.github/workflows/build-ios-2026-08-23.yml'
-      - 'ios/**'
 
 permissions:
   contents: read
