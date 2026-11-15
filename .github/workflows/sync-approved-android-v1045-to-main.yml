@@ -49,6 +49,20 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/fix-v1044-build-source.py
+          # This job synchronizes the exact release SOURCE, not another APK.
+          # Keep all historic source patches and TypeScript validation, but
+          # omit repeated expensive Gradle assembly (already passed in the
+          # verified v1.0.45 signed AAB workflow).
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in [".github/tablet/build-apk.sh", ".github/scripts/build-v1043-windsor-directory-resume.sh"]:
+            path = Path(name)
+            body = path.read_text(encoding="utf-8")
+            marker = "cd mobile/android\nchmod +x gradlew\n./gradlew clean assembleRelease --no-daemon --max-workers=2 --stacktrace\n"
+            assert body.count(marker) == 1, f"Source-only Gradle boundary changed in {name}"
+            body = body[:body.index(marker)] + 'echo "SOURCE_ONLY_RECONSTRUCTION_COMPLETE"\n'
+            path.write_text(body, encoding="utf-8")
+          PY
           bash .github/scripts/build-v1045-from-approved-v1044.sh
       - name: Verify clean canonical source before committing
         shell: bash
@@ -100,6 +114,9 @@ jobs:
             print("Normalized source whitespace:",path)
           PY
           git add -A -- mobile
+          # The local Firebase configuration was present in the historical
+          # build environment; never introduce it as a GitHub commit.
+          git restore --staged -- mobile/google-services.json
           git diff --cached --check
           if git diff --cached --name-only | grep -v '^mobile/' ; then
             echo "Refusing to commit unexpected changes outside Android mobile/"
@@ -126,6 +143,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --only -m "Make Android main source canonical v1.0.45 from approved Play v1.0.44" -m "Replaces older mobile baseline with verified approved icon, native Azan, live Windsor JSON, weekly/monthly home view and GPS nearest-mosque fallback. Original main backed up at backup/android-main-before-v1045-source-sync." -- mobile
+          git commit -m "Make Android main source canonical v1.0.45 from approved Play v1.0.44" -m "Replaces older mobile baseline with verified approved icon, native Azan, live Windsor JSON, weekly/monthly home view and GPS nearest-mosque fallback. Original main backed up at backup/android-main-before-v1045-source-sync."
           git push origin HEAD:main
           echo "ANDROID_MAIN_CANONICAL_V1045_SYNC_COMPLETE"
