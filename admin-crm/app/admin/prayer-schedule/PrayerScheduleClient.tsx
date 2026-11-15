@@ -30,6 +30,57 @@ function monthKeyNow() {
   const get = (k: string) => p.find((x) => x.type === k)?.value || "";
   return `${get("year")}-${get("month")}`;
 }
+function to12Hour(value: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return value;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return value;
+  return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "AM" : "PM"}`;
+}
+
+function to24Hour(value: string): string | null {
+  const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(value.trim());
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 1 || hour > 12 || minute > 59) return null;
+  hour = hour % 12 + (match[3].toUpperCase() === "PM" ? 12 : 0);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function PrayerTimeInput({ date, prayer, value, onCommit }: {
+  date: string; prayer: Prayer; value: string; onCommit: (date: string, prayer: Prayer, value: string) => void;
+}) {
+  const [draft, setDraft] = useState(() => to12Hour(value));
+  const [focused, setFocused] = useState(false);
+  const [invalid, setInvalid] = useState(false);
+  useEffect(() => { if (!focused) { setDraft(to12Hour(value)); setInvalid(false); } }, [value, focused]);
+  const commit = () => {
+    setFocused(false);
+    const converted = to24Hour(draft);
+    if (converted === null) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    setDraft(to12Hour(converted));
+    if (converted !== value) onCommit(date, prayer, converted);
+  };
+  return <input
+    aria-label={`${date} ${prayer} (12-hour AM/PM)`}
+    value={draft}
+    onFocus={() => setFocused(true)}
+    onChange={(event) => { setDraft(event.target.value); setInvalid(false); }}
+    onBlur={commit}
+    onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { setDraft(to12Hour(value)); event.currentTarget.blur(); } }}
+    title={invalid ? "Enter a valid time, e.g. 5:39 AM or 12:16 PM" : "Enter a time with AM or PM"}
+    placeholder="5:39 AM"
+    aria-invalid={invalid}
+    style={{...s.timeInput,width:116,borderColor:invalid?"#bd3030":"#d7e0dc",background:invalid?"#fff0f0":"#fff"}}
+  />;
+}
+
 function labelPrayer(p: Prayer) { return p.charAt(0).toUpperCase() + p.slice(1); }
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 function monthName(key: string) { const match = /^\d{4}-(0[1-9]|1[0-2])$/.exec(key); return match ? MONTH_LABELS[Number(match[1]) - 1] : key; }
@@ -216,10 +267,10 @@ export default function PrayerScheduleClient({ initialMonth, initialWindsorDate 
       {message ? <div style={s.message}>{message}</div> : null}
 
       <section style={s.tableCard}>
-        <div style={s.tableHead}><div><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}><div style={s.cardTitle}>{month} prayer times</div><span style={{...s.selectedBadge,...statusStyle(selectedInfo)}}>{statusLabel(selectedInfo)}</span></div><div style={s.help}>{rowCount} days loaded • times are 24-hour Windsor local time{dirty ? " • unsaved edits" : ""}</div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={Boolean(busy)} onClick={() => void load(month)} style={s.secondary}>Reload current</button><button disabled={Boolean(busy) || !rowCount || selectedInfo?.status === "approved" && !dirty} onClick={() => void approveOrPublish()} style={s.publish}>{actionLabel}</button></div></div>
+        <div style={s.tableHead}><div><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}><div style={s.cardTitle}>{month} prayer times</div><span style={{...s.selectedBadge,...statusStyle(selectedInfo)}}>{statusLabel(selectedInfo)}</span></div><div style={s.help}>{rowCount} days loaded • 12-hour Windsor local time (AM/PM){dirty ? " • unsaved edits" : ""}</div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={Boolean(busy)} onClick={() => void load(month)} style={s.secondary}>Reload current</button><button disabled={Boolean(busy) || !rowCount || selectedInfo?.status === "approved" && !dirty} onClick={() => void approveOrPublish()} style={s.publish}>{actionLabel}</button></div></div>
         {!status?.githubPublishingConfigured ? <div style={s.warning}><strong>GitHub publishing is not connected yet.</strong> Months already stored in the official JSON can still be approved here. Only pulled changes or manual edits require the <code>GITHUB_SCHEDULE_TOKEN</code> before they can be published.</div> : null}
         {needsPublish && !status?.githubPublishingConfigured ? <div style={s.warning}><strong>Publish required:</strong> this month contains pulled or edited data that has not been written to the official JSON yet.</div> : null}
-        <div style={{overflowX:"auto"}}><table style={s.table}><thead><tr><th style={s.th}>Date</th>{PRAYERS.map((p) => <th key={p} style={s.th}>{labelPrayer(p)}</th>)}</tr></thead><tbody>{dates.map((date) => <tr key={date}><td style={s.dateCell}>{date}</td>{PRAYERS.map((p) => <td key={p} style={s.td}><input aria-label={`${date} ${p}`} value={rows[date]?.[p] || ""} onChange={(e) => edit(date, p, e.target.value)} style={s.timeInput} /></td>)}</tr>)}</tbody></table></div>
+        <div style={{overflowX:"auto"}}><table style={s.table}><thead><tr><th style={s.th}>Date</th>{PRAYERS.map((p) => <th key={p} style={s.th}>{labelPrayer(p)}</th>)}</tr></thead><tbody>{dates.map((date) => <tr key={date}><td style={s.dateCell}>{date}</td>{PRAYERS.map((p) => <td key={p} style={s.td}><PrayerTimeInput date={date} prayer={p} value={rows[date]?.[p] || ""} onCommit={edit} /></td>)}</tr>)}</tbody></table></div>
       </section>
     </main>
   );
