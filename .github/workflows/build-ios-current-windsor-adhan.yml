@@ -68,7 +68,7 @@ jobs:
           path=Path("app.config.ts")
           contents=path.read_text()
           version=f'20261115.{os.environ["GITHUB_RUN_NUMBER"]}'
-          contents,n=re.subn(r'buildNumber:\\s*"[^"]+"',f'buildNumber: "{version}"',contents,count=1)
+          contents,n=re.subn(r'buildNumber:\s*"[^"]+"',f'buildNumber: "{version}"',contents,count=1)
           assert n==1, "iOS build number not found"
           path.write_text(contents)
           print("iOS buildNumber",version)
