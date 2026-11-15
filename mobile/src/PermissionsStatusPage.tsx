@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import * as Notifications from "expo-notifications";
+import * as Location from "expo-location";
 import {
   AppState,
+  Linking,
   PermissionsAndroid,
   Platform,
   Pressable,
@@ -12,8 +15,10 @@ import {
 import { canScheduleAndroidExactAlarms, openExactAlarmSettings } from "./prayerAudio";
 
 type Props = { locale: "en" | "ar"; onBack: () => void };
+type LocationLevel = "off" | "approximate" | "precise";
 type Status = {
-  location: boolean;
+  location: LocationLevel;
+  locationServices: boolean;
   notifications: boolean;
   exactAlarm: boolean;
   camera: boolean;
@@ -21,7 +26,8 @@ type Status = {
 };
 
 const emptyStatus: Status = {
-  location: false,
+  location: "off",
+  locationServices: false,
   notifications: false,
   exactAlarm: false,
   camera: false,
@@ -36,17 +42,18 @@ export default function PermissionsStatusPage({ locale, onBack }: Props) {
 
   const refresh = useCallback(async () => {
     if (Platform.OS !== "android") return;
-    const notifications = Number(Platform.Version) < 33
-      ? true
-      : await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
-    const [location, camera, microphone] = await Promise.all([
+    const [fine, coarse, camera, microphone, notificationPermission, locationServices] = await Promise.all([
       PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION),
+      PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION),
       PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA),
-      PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)
+      PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO),
+      Notifications.getPermissionsAsync(),
+      Location.hasServicesEnabledAsync()
     ]);
     setStatus({
-      location,
-      notifications,
+      location: fine ? "precise" : coarse ? "approximate" : "off",
+      locationServices,
+      notifications: Number(Platform.Version) < 33 ? notificationPermission.status !== "denied" : notificationPermission.granted,
       exactAlarm: canScheduleAndroidExactAlarms(),
       camera,
       microphone
@@ -56,40 +63,112 @@ export default function PermissionsStatusPage({ locale, onBack }: Props) {
   useEffect(() => {
     void refresh();
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") setTimeout(() => void refresh(), 250);
+      if (state === "active") setTimeout(() => void refresh(), 300);
     });
     return () => sub.remove();
   }, [refresh]);
 
-  const request = async (key: keyof Status) => {
-    if (Platform.OS !== "android" || busy) return;
-    if (key === "exactAlarm") {
-      openExactAlarmSettings();
-      return;
-    }
-    const permission = key === "location"
-      ? PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-      : key === "camera"
-        ? PermissionsAndroid.PERMISSIONS.CAMERA
-        : key === "microphone"
-          ? PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
-          : PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS;
-    setBusy(key);
+  const openAppSettings = async () => {
+    try { await Linking.openSettings(); } catch {}
+  };
+
+  const openLocationServices = async () => {
     try {
-      await PermissionsAndroid.request(permission);
+      await Linking.sendIntent("android.settings.LOCATION_SOURCE_SETTINGS");
+    } catch {
+      await openAppSettings();
+    }
+  };
+
+  const requestLocation = async () => {
+    if (busy) return;
+    setBusy("location");
+    try {
+      const result = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+      ]);
+      const fine = result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+      const coarse = result[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION];
+      if (fine === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN || coarse === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
+        await openAppSettings();
+      }
     } finally {
       setBusy(null);
       await refresh();
     }
   };
 
-  const rows: Array<[keyof Status, string, string, string]> = [
-    ["location", "📍", t("Location", "الموقع"), t("Current city, local prayer times and Qibla.", "المدينة الحالية ومواقيت الصلاة المحلية والقبلة.")],
-    ["notifications", "🔔", t("Notifications", "الإشعارات"), t("20-minute, 10-minute and prayer-time alerts.", "تنبيهات ٢٠ دقيقة و١٠ دقائق ووقت الصلاة.")],
-    ["exactAlarm", "⏰", t("Alarms & reminders", "المنبهات والتذكيرات"), t("Lets the full Adhan start at the exact prayer time, even when Hassoun is closed.", "يسمح ببدء الأذان الكامل في وقت الصلاة المحدد حتى عند إغلاق حسّون.")],
-    ["camera", "📷", t("Camera", "الكاميرا"), t("Only used when you scan a Masjid display QR code.", "تُستخدم فقط عند مسح رمز QR الخاص بشاشة المسجد.")],
-    ["microphone", "🎙️", t("Microphone", "الميكروفون"), t("Used only for Qur’an recitation practice features.", "يُستخدم فقط لميزات تدريب تلاوة القرآن.")]
-  ];
+  const requestNotifications = async () => {
+    if (busy) return;
+    setBusy("notifications");
+    try {
+      const result = await Notifications.requestPermissionsAsync();
+      if (!result.granted && result.canAskAgain === false) await openAppSettings();
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  };
+
+  const requestRuntime = async (key: "camera" | "microphone") => {
+    if (busy) return;
+    const permission = key === "camera" ? PermissionsAndroid.PERMISSIONS.CAMERA : PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+    setBusy(key);
+    try {
+      const result = await PermissionsAndroid.request(permission);
+      if (result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) await openAppSettings();
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  };
+
+  const permissionCard = (
+    key: string,
+    emoji: string,
+    title: string,
+    description: string,
+    enabled: boolean,
+    actionLabel: string,
+    action: () => void,
+    secondaryLabel?: string,
+    secondaryAction?: () => void
+  ) => (
+    <View key={key} style={styles.card}>
+      <View style={styles.icon}><Text style={styles.iconText}>{emoji}</Text></View>
+      <View style={styles.copy}>
+        <View style={styles.titleRow}>
+          <Text style={styles.cardTitle}>{title}</Text>
+          <View style={[styles.badge, enabled ? styles.badgeOn : styles.badgeOff]}>
+            <Text style={[styles.badgeText, enabled ? styles.badgeTextOn : styles.badgeTextOff]}>
+              {enabled ? t("ENABLED", "مفعّل") : t("OFF / NEEDS ATTENTION", "متوقف / يحتاج انتباه")}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.description}>{description}</Text>
+        <View style={styles.actions}>
+          <Pressable disabled={busy === key} onPress={action} style={styles.enableButton}>
+            <Text style={styles.enableText}>{busy === key ? t("Checking…", "جارٍ التحقق…") : actionLabel}</Text>
+          </Pressable>
+          {secondaryLabel && secondaryAction ? (
+            <Pressable onPress={secondaryAction} style={styles.secondaryButton}>
+              <Text style={styles.secondaryText}>{secondaryLabel}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+
+  const locationEnabled = status.location !== "off";
+  const locationLabel = !status.locationServices
+    ? t("Android Location Services are OFF. Turn them on for GPS prayer times, Qibla and nearby mosques.", "خدمات الموقع في Android متوقفة. فعّلها لمواقيت الصلاة عبر GPS والقبلة والمساجد القريبة.")
+    : status.location === "precise"
+      ? t("Precise location is allowed and Location Services are ON. Hassoun can use exact GPS coordinates for local prayer times.", "الموقع الدقيق مسموح وخدمات الموقع مفعلة. يمكن لحسّون استخدام إحداثيات GPS الدقيقة لمواقيت الصلاة المحلية.")
+      : status.location === "approximate"
+        ? t("Approximate location is allowed and Location Services are ON. Enable Precise location for the most accurate automatic prayer source.", "الموقع التقريبي مسموح وخدمات الموقع مفعلة. فعّل الموقع الدقيق للحصول على أدق مصدر تلقائي لمواقيت الصلاة.")
+        : t("Location permission is off. Hassoun needs it for automatic local prayer times, Qibla and nearby mosques.", "إذن الموقع متوقف. يحتاجه حسّون للمواقيت المحلية التلقائية والقبلة والمساجد القريبة.");
 
   return (
     <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -100,32 +179,54 @@ export default function PermissionsStatusPage({ locale, onBack }: Props) {
           <Text style={styles.title}>{t("Permissions", "الأذونات")}</Text>
         </View>
       </View>
-      <Text style={styles.subtitle}>{t("See exactly what Hassoun can use on this phone. Anything missing can be enabled here.", "شاهد بالضبط ما هو مسموح لحسّون على هذا الهاتف. يمكنك تفعيل أي إذن ناقص من هنا.")}</Text>
+      <Text style={styles.subtitle}>{t("Live status and controls for every phone permission Hassoun uses. Enable missing access here, or open Android settings to change or disable access that is already enabled.", "حالة مباشرة وتحكم بكل إذن يستخدمه حسّون. فعّل الأذونات الناقصة من هنا أو افتح إعدادات Android لتغيير أو تعطيل الإذن المفعّل.")}</Text>
 
-      {rows.map(([key, emoji, title, description]) => {
-        const enabled = status[key];
-        return (
-          <View key={key} style={styles.card}>
-            <View style={styles.icon}><Text style={styles.iconText}>{emoji}</Text></View>
-            <View style={styles.copy}>
-              <View style={styles.titleRow}>
-                <Text style={styles.cardTitle}>{title}</Text>
-                <View style={[styles.badge, enabled ? styles.badgeOn : styles.badgeOff]}>
-                  <Text style={[styles.badgeText, enabled ? styles.badgeTextOn : styles.badgeTextOff]}>{enabled ? t("ENABLED", "مفعّل") : t("NOT ENABLED", "غير مفعّل")}</Text>
-                </View>
-              </View>
-              <Text style={styles.description}>{description}</Text>
-              {!enabled ? (
-                <Pressable disabled={busy === key} onPress={() => void request(key)} style={styles.enableButton}>
-                  <Text style={styles.enableText}>{busy === key ? t("Opening…", "جارٍ الفتح…") : key === "exactAlarm" ? t("Open Alarms & reminders", "فتح المنبهات والتذكيرات") : t("Enable now", "تفعيل الآن")}</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
-        );
-      })}
+      {permissionCard(
+        "location", "📍", t("Location", "الموقع"), locationLabel, locationEnabled && status.locationServices,
+        status.location === "precise" ? t("Manage / Disable", "إدارة / تعطيل") : status.location === "approximate" ? t("Enable precise location", "تفعيل الموقع الدقيق") : t("Enable location", "تفعيل الموقع"),
+        () => { if (status.location === "precise") void openAppSettings(); else void requestLocation(); },
+        status.locationServices ? t("Manage Location Services", "إدارة خدمات الموقع") : t("Turn on Location Services", "تفعيل خدمات الموقع"), () => { void openLocationServices(); }
+      )}
 
-      <Pressable onPress={() => void refresh()} style={styles.refreshButton}><Text style={styles.refreshText}>{t("Refresh permission status", "تحديث حالة الأذونات")}</Text></Pressable>
+      {permissionCard(
+        "notifications", "🔔", t("Notifications", "الإشعارات"),
+        t("Prayer reminders, Adhan notifications, Islamic-event reminders and other Hassoun alerts.", "تنبيهات الصلاة وإشعارات الأذان والمناسبات الإسلامية وتنبيهات حسّون الأخرى."),
+        status.notifications,
+        status.notifications ? t("Manage / Disable", "إدارة / تعطيل") : t("Enable notifications", "تفعيل الإشعارات"),
+        () => { if (status.notifications) void openAppSettings(); else void requestNotifications(); }
+      )}
+
+      {permissionCard(
+        "exactAlarm", "⏰", t("Alarms & reminders", "المنبهات والتذكيرات"),
+        t("Special Android access that lets the full Adhan start at the exact prayer time, including while Hassoun is closed or the phone is locked.", "إذن Android خاص يسمح ببدء الأذان الكامل في وقت الصلاة المحدد حتى عند إغلاق حسّون أو قفل الهاتف."),
+        status.exactAlarm,
+        status.exactAlarm ? t("Manage / Disable", "إدارة / تعطيل") : t("Enable Alarms & reminders", "تفعيل المنبهات والتذكيرات"),
+        () => openExactAlarmSettings()
+      )}
+
+      {permissionCard(
+        "camera", "📷", t("Camera", "الكاميرا"),
+        t("Used only when you choose to scan a QR code for a Masjid / wall display.", "تستخدم فقط عندما تختار مسح رمز QR لشاشة المسجد أو الحائط."),
+        status.camera,
+        status.camera ? t("Manage / Disable", "إدارة / تعطيل") : t("Enable camera", "تفعيل الكاميرا"),
+        () => { if (status.camera) void openAppSettings(); else void requestRuntime("camera"); }
+      )}
+
+      {permissionCard(
+        "microphone", "🎙️", t("Microphone", "الميكروفون"),
+        t("Used only for Qur’an recitation and memorization practice features that listen to your recitation.", "يستخدم فقط لميزات تلاوة القرآن وتدريب الحفظ التي تستمع إلى تلاوتك."),
+        status.microphone,
+        status.microphone ? t("Manage / Disable", "إدارة / تعطيل") : t("Enable microphone", "تفعيل الميكروفون"),
+        () => { if (status.microphone) void openAppSettings(); else void requestRuntime("microphone"); }
+      )}
+
+      <View style={styles.systemCard}>
+        <Text style={styles.systemTitle}>{t("System-managed access", "أذونات يديرها النظام")}</Text>
+        <Text style={styles.systemText}>{t("Hassoun also declares the Android access needed for vibration, wake lock, foreground audio service and restoring prayer schedules after a reboot. Android grants these at install time; they do not have separate user permission switches.", "يعلن حسّون أيضاً أذونات Android اللازمة للاهتزاز ومنع السكون وخدمة الصوت في الخلفية واستعادة جداول الصلاة بعد إعادة التشغيل. يمنح Android هذه عند التثبيت ولا توجد لها مفاتيح أذونات منفصلة للمستخدم.")}</Text>
+      </View>
+
+      <Pressable onPress={() => void refresh()} style={styles.refreshButton}><Text style={styles.refreshText}>{t("Refresh all permission status", "تحديث حالة جميع الأذونات")}</Text></Pressable>
+      <Text style={styles.note}>{t("Android does not let an app revoke most permissions itself. When access is already enabled, Manage / Disable opens Android's app settings so you remain in control.", "لا يسمح Android للتطبيق بإلغاء معظم الأذونات بنفسه. عندما يكون الإذن مفعلاً يفتح زر إدارة / تعطيل إعدادات التطبيق في Android لتبقى أنت المتحكم.")}</Text>
     </ScrollView>
   );
 }
@@ -152,8 +253,15 @@ const styles = StyleSheet.create({
   badgeTextOn: { color: "#0b6b51" },
   badgeTextOff: { color: "#a05432" },
   description: { color: "#78827e", fontSize: 10.5, lineHeight: 16, marginTop: 5 },
-  enableButton: { alignSelf: "flex-start", marginTop: 10, minHeight: 36, borderRadius: 11, paddingHorizontal: 12, backgroundColor: "#0b654f", alignItems: "center", justifyContent: "center" },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10 },
+  enableButton: { minHeight: 36, borderRadius: 11, paddingHorizontal: 12, backgroundColor: "#0b654f", alignItems: "center", justifyContent: "center" },
   enableText: { color: "#fff", fontSize: 9.5, fontWeight: "900" },
-  refreshButton: { marginTop: 8, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: "#0b654f", alignItems: "center", justifyContent: "center" },
-  refreshText: { color: "#0b654f", fontSize: 11, fontWeight: "900" }
+  secondaryButton: { minHeight: 36, borderRadius: 11, paddingHorizontal: 12, backgroundColor: "#edf5f1", borderWidth: 1, borderColor: "#cfe0d8", alignItems: "center", justifyContent: "center" },
+  secondaryText: { color: "#0b654f", fontSize: 9.5, fontWeight: "900" },
+  systemCard: { borderRadius: 18, padding: 14, marginBottom: 10, backgroundColor: "#f0ece1", borderWidth: 1, borderColor: "#dfd7c5" },
+  systemTitle: { color: "#665323", fontSize: 11, fontWeight: "900" },
+  systemText: { color: "#7a7058", fontSize: 9.5, lineHeight: 15, marginTop: 5 },
+  refreshButton: { marginTop: 5, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: "#0b654f", alignItems: "center", justifyContent: "center" },
+  refreshText: { color: "#0b654f", fontSize: 11, fontWeight: "900" },
+  note: { color: "#7b8782", fontSize: 9.5, lineHeight: 15, marginTop: 10, textAlign: "center" }
 });

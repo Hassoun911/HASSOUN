@@ -1,8 +1,10 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Image,
   Linking,
   Platform,
@@ -19,17 +21,25 @@ import HassounWidget, { type HassounWidgetAppearance, type HassounWidgetCountdow
 import { ReaderSettingsSheet, useQuranAppearance } from "./quran/quranRendering";
 import { submitSupportMessage } from "./support";
 import BrandMark from "./BrandMark";
+import VoiceAssistantsPage from "./VoiceAssistantsPage";
+import PermissionsStatusPage from "./PermissionsStatusPage";
+import FeatureGuidePage from "./FeatureGuidePage";
+import AboutHassounPage from "./AboutHassounPage";
+import PrayerCalculationSettingsPage from "./PrayerCalculationSettingsPage";
+import ConnectDisplayPage from "./ConnectDisplayPage";
+import MasjidDisplayPage from "./MasjidDisplayPage";
 
-type SettingsPage = "root" | "about" | "contact" | "privacy" | "terms" | "data" | "permissions" | "widgets";
+type SettingsPage = "root" | "about" | "guide" | "contact" | "privacy" | "terms" | "data" | "permissions" | "widgets" | "calculation" | "displays" | "connectDisplay" | "masjidDisplay" | "voiceAssistants";
 
 type Props = {
   locale: "en" | "ar";
   onToggleLocale: () => void;
   onOpenAlerts: () => void;
+  onOpenWallDisplays: () => void;
   onOpenEmailAlerts?: () => void;
 };
 
-const PUBLIC_BASE = "https://hassoun911.github.io/WOPT";
+const PUBLIC_BASE = "https://hassoun.app";
 
 const WIDGET_THEME_META: Record<HassounWidgetTheme, { bg: string; fg: string; muted: string; accent: string; border: string }> = {
   emerald: { bg: "#0B654F", fg: "#FFFFFF", muted: "#C7DDD6", accent: "#F0D27A", border: "#D2B25A" },
@@ -66,16 +76,92 @@ function LegalCard({ title, children }: { title: string; children: React.ReactNo
   return <View style={styles.legalCard}><Text style={styles.legalTitle}>{title}</Text><View style={styles.legalBody}>{children}</View></View>;
 }
 
-export default function SettingsHub({ locale, onToggleLocale, onOpenAlerts, onOpenEmailAlerts }: Props) {
+export default function SettingsHub({ locale, onToggleLocale, onOpenAlerts, onOpenWallDisplays, onOpenEmailAlerts }: Props) {
   const ar = locale === "ar";
   const t = (en: string, arabic: string) => ar ? arabic : en;
   const systemColorScheme = useColorScheme();
   const [page, setPage] = useState<SettingsPage>("root");
+  const [settingsRouteReady, setSettingsRouteReady] = useState(false);
+  const settingsCurrentPageRef = useRef<SettingsPage>("root");
+  settingsCurrentPageRef.current = page;
+  const [settingsPageRestoredV3, setSettingsPageRestoredV3] = useState(false);
+  const [settingsPageRestored, setSettingsPageRestored] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
+
+  // HASSOUN_SETTINGS_NESTED_RESUME_V1
+  useEffect(() => {
+    let alive = true;
+    void AsyncStorage.getItem("hassoun:settings-nested-route:v1")
+      .then((saved) => {
+        if (alive && saved) setPage(saved as SettingsPage);
+      })
+      .finally(() => { if (alive) setSettingsRouteReady(true); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsRouteReady) return;
+    void AsyncStorage.setItem("hassoun:settings-nested-route:v1", page).catch(() => undefined);
+  }, [page, settingsRouteReady]);
+
+
+  useEffect(() => {
+    let alive = true;
+    void AsyncStorage.getItem("hassoun:last-settings-page:v3")
+      .then((saved) => {
+        if (!alive || !saved || settingsCurrentPageRef.current !== "root") return;
+        setPage(saved as SettingsPage);
+      })
+      .finally(() => { if (alive) setSettingsPageRestoredV3(true); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsPageRestoredV3) return;
+    void AsyncStorage.setItem("hassoun:last-settings-page:v3", page).catch(() => undefined);
+  }, [page, settingsPageRestoredV3]);
+
+
+
+  // Android system back inside Settings follows the same hierarchy as the
+  // visible back buttons instead of allowing Android to exit the app.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (readerOpen) {
+        setReaderOpen(false);
+        return true;
+      }
+      if (page === "connectDisplay") {
+        setPage("displays");
+        return true;
+      }
+      if (page !== "root") {
+        setPage("root");
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [page, readerOpen]);
   const { appearance, setAppearance, reset } = useQuranAppearance();
   const appVersion = Constants.expoConfig?.version ?? "0.5.0";
 
   const [widgetPrefs, setWidgetPrefs] = useState<HassounWidgetPreferences>(() => ({ ...HassounWidget.getPreferences(), locale }));
+
+  useEffect(() => {
+    let alive = true;
+    void AsyncStorage.getItem("hassoun:last-settings-page:v1").then((saved) => {
+      if (!alive || !saved) return;
+      const allowed = ["root","about","contact","privacy","terms","data","permissions","widgets","displays","connectDisplay","prayerCalculation","calculation"];
+      if (allowed.includes(saved)) setPage(saved as SettingsPage);
+    }).finally(() => { if (alive) setSettingsPageRestored(true); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsPageRestored) return;
+    void AsyncStorage.setItem("hassoun:last-settings-page:v1", page).catch(() => undefined);
+  }, [page, settingsPageRestored]);
   const widgetCapabilities = useMemo(() => HassounWidget.getCapabilities(), [page]);
 
   useEffect(() => {
@@ -108,11 +194,15 @@ export default function SettingsHub({ locale, onToggleLocale, onOpenAlerts, onOp
       <Section title={t("APP SETTINGS", "إعدادات التطبيق")}>
         <Row emoji="📖" title={t("Qur’an reading", "إعدادات قراءة القرآن")} text={t("Font, Tajweed, page browsing, layout, size and colors", "الخط والتجويد والتنقل وشكل الصفحات والحجم والألوان")} onPress={() => setReaderOpen(true)} />
         <Row emoji="🧩" title={t("Widgets", "الويدجت")} text={t("Choose layout and what appears on home and supported lock screens", "اختر التصميم والمعلومات التي تظهر على الشاشة الرئيسية وشاشة القفل المدعومة")} onPress={() => setPage("widgets")} />
+        <Row emoji="🖥️" title={t("Displays", "الشاشات")} text={t("Connect, control, or open tablet and TV wall displays", "ربط أو التحكم أو فتح شاشات الحائط على الأجهزة اللوحية والتلفاز")} onPress={() => setPage("displays")} />
         <Row emoji="🔔" title={t("Prayer & Adhan alerts", "تنبيهات الصلاة والأذان")} text={t("Notification, Adhan and email alert controls", "التحكم بالتنبيهات والأذان وتنبيهات البريد")} onPress={onOpenAlerts} />
+        <Row emoji="🎙️" title={t("Voice Assistants", "المساعدات الصوتية")} text={t("Connect Hassoun to Alexa and Google Home", "اربط Hassoun مع Alexa وGoogle Home")} onPress={() => setPage("voiceAssistants")} />
+        <Row emoji="🧭" title={t("Prayer calculation", "حساب مواقيت الصلاة")} text={t("Smart source, official mosque schedule, calculated times, Asr school and tuning", "مصدر ذكي أو جدول مسجد رسمي أو مواقيت محسوبة ومذهب العصر والضبط")} onPress={() => setPage("calculation")} />
         <Row emoji="🌐" title={t("Language", "اللغة")} text={t("Switch to Arabic", "التبديل إلى الإنجليزية")} onPress={onToggleLocale} />
       </Section>
 
       <Section title={t("HELP & SUPPORT", "المساعدة والدعم")}>
+        <Row emoji="🧭" title={t("Learn the App", "تعرّف على التطبيق")} text={t("Easy feature guide with search, steps, examples, emojis and troubleshooting", "دليل سهل للميزات مع البحث والخطوات والأمثلة والإيموجي وحل المشاكل")} onPress={() => setPage("guide")} />
         <Row emoji="✉️" title={t("Contact us", "اتصل بنا")} text={t("Send Hassoun support a message from inside the app", "أرسل رسالة إلى دعم Hassoun من داخل التطبيق")} onPress={() => setPage("contact")} />
         <Row emoji="🔐" title={t("Permissions", "الأذونات")} text={t("Why Hassoun requests location, notifications, alarms and microphone", "لماذا يطلب Hassoun الموقع والتنبيهات والمنبهات والميكروفون")} onPress={() => setPage("permissions")} />
         <Row emoji="ℹ️" title={t("About Hassoun", "حول Hassoun")} text={t(`Version ${appVersion} • Prayer • Qur’an • Knowledge`, `الإصدار ${appVersion} • الصلاة • القرآن • المعرفة`)} onPress={() => setPage("about")} />
@@ -131,6 +221,30 @@ export default function SettingsHub({ locale, onToggleLocale, onOpenAlerts, onOp
   );
 
   if (page === "root") return root;
+
+  if (page === "voiceAssistants") return <VoiceAssistantsPage locale={locale} onBack={() => setPage("root")} />;
+
+  if (page === "permissions") return <PermissionsStatusPage locale={locale} onBack={() => setPage("root")} />;
+
+  if (page === "connectDisplay") return <ConnectDisplayPage locale={locale} onBack={() => setPage("displays")} />;
+
+  if (page === "masjidDisplay") return <MasjidDisplayPage locale={locale} onBack={() => setPage("displays")} />;
+
+  if (page === "displays") {
+    return (
+      <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <BackHeader title={t("Displays", "الشاشات")} onBack={() => setPage("root")} />
+        <Text style={styles.subtitle}>{t("Open this device as a wall display, or pair and remotely control another display.", "افتح هذا الجهاز كشاشة حائط أو اربط شاشة أخرى وتحكم بها عن بُعد.")}</Text>
+        <Section title={t("DISPLAY OPTIONS", "خيارات الشاشة")}>
+          <Row emoji="🕌" title={t("Tablet / Wall Display", "شاشة الجهاز اللوحي / الحائط")} text={t("Open the full-screen rotating prayer display on this device", "افتح شاشة الصلاة الدوارة بملء الشاشة على هذا الجهاز")} onPress={() => setPage("masjidDisplay")} />
+          <Row emoji="🔗" title={t("Connect Display", "ربط شاشة")} text={t("Scan a QR code or enter the 6-digit pairing code", "امسح رمز QR أو أدخل رمز الربط المكوّن من 6 أرقام")} onPress={() => setPage("connectDisplay")} />
+          <Row emoji="🖥️" title={t("Manage Wall & Masjid Displays", "إدارة شاشات الحائط والمسجد")} text={t("Manage saved displays and open their remote admin controls", "إدارة الشاشات المحفوظة وفتح أدوات التحكم عن بُعد")} onPress={() => setPage("connectDisplay")} />
+        </Section>
+      </ScrollView>
+    );
+  }
+
+  if (page === "calculation") return <PrayerCalculationSettingsPage locale={locale} onBack={() => setPage("root")} />;
 
   if (page === "widgets") {
     const effectivePreviewTheme: HassounWidgetTheme = widgetPrefs.appearance === "light" ? "ivory" : widgetPrefs.appearance === "dark" ? "midnight" : systemColorScheme === "dark" ? "midnight" : "ivory";
@@ -262,40 +376,11 @@ export default function SettingsHub({ locale, onToggleLocale, onOpenAlerts, onOp
     );
   }
 
+  if (page === "guide") return <FeatureGuidePage locale={locale} onBack={() => setPage("root")} />;
+
   if (page === "contact") return <ContactPage locale={locale} version={appVersion} onBack={() => setPage("root")} />;
 
-  if (page === "about") {
-    return (
-      <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-        <BackHeader title={t("About Hassoun", "حول Hassoun")} onBack={() => setPage("root")} />
-        <View style={styles.aboutHero}><Text style={styles.aboutMoon}>☪</Text><Text style={styles.aboutTitle}>Hassoun</Text><Text style={styles.aboutTagline}>{t("Prayer • Qur’an • Knowledge", "الصلاة • القرآن • المعرفة")}</Text><Text style={styles.version}>v{appVersion}</Text></View>
-        <LegalCard title={t("Our purpose", "هدفنا")}><Text style={styles.legalText}>{t("Hassoun brings prayer times, Adhan, Qur’an reading and listening, memorization tools and Islamic learning into one calm, easy-to-use experience.", "يجمع Hassoun مواقيت الصلاة والأذان وقراءة القرآن والاستماع إليه وأدوات الحفظ والتعلم الإسلامي في تجربة سهلة وواضحة.")}</Text></LegalCard>
-        <LegalCard title={t("Sources", "المصادر")}><Text style={styles.legalText}>{t("Windsor prayer times use the official Windsor Islamic Association schedule. Qur’an text and recitation features use verified Qur’anic data and recognized public Qur’an services where indicated in the app.", "تستخدم مواقيت وندسور الجدول الرسمي لجمعية وندسور الإسلامية. تستخدم ميزات نص القرآن والتلاوة بيانات قرآنية موثقة وخدمات قرآن عامة معروفة حيث يشار إليها داخل التطبيق.")}</Text></LegalCard>
-      </ScrollView>
-    );
-  }
-
-  if (page === "permissions") {
-    return (
-      <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-        <BackHeader title={t("Permissions", "الأذونات")} onBack={() => setPage("root")} />
-        <LegalCard title={t("📍 Location", "📍 الموقع")}><Text style={styles.legalText}>{t("Used to select local prayer times and the correct time zone for optional email alerts. Hassoun should still offer manual/local schedule options when location is not granted.", "يستخدم لاختيار مواقيت الصلاة المحلية والمنطقة الزمنية الصحيحة لتنبيهات البريد الاختيارية. يجب أن تبقى الخيارات اليدوية والمحلية متاحة عند عدم منح إذن الموقع.")}</Text></LegalCard>
-        <LegalCard title={t("🔔 Notifications & exact alarms", "🔔 التنبيهات والمنبهات الدقيقة")}><Text style={styles.legalText}>{t("Used for 20-minute and 10-minute reminders and for starting the native Adhan at prayer time, including while the screen is locked.", "تستخدم لتنبيهات 20 و10 دقائق وتشغيل الأذان الأصلي في وقت الصلاة حتى عند قفل الشاشة.")}</Text></LegalCard>
-        <LegalCard title={t("🎙️ Microphone", "🎙️ الميكروفون")}><Text style={styles.legalText}>{t("Used only when you choose recitation practice. Hassoun uses the device’s Android speech-recognition service to compare your recitation; Hassoun does not intentionally upload or store raw microphone recordings on its own server.", "يستخدم فقط عند اختيار تدريب التلاوة. يستخدم Hassoun خدمة التعرف على الكلام في Android لمقارنة التلاوة ولا يقوم Hassoun عمداً برفع أو تخزين تسجيلات الميكروفون الخام على خادمه.")}</Text></LegalCard>
-      </ScrollView>
-    );
-  }
-
-  if (page === "data") {
-    return (
-      <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-        <BackHeader title={t("Data & privacy choices", "خيارات البيانات والخصوصية")} onBack={() => setPage("root")} />
-        <LegalCard title={t("No Hassoun account required", "لا يلزم حساب Hassoun")}><Text style={styles.legalText}>{t("The core app does not require you to create or sign in to a Hassoun account. Reading preferences, bookmarks and memorization progress are primarily stored on your device.", "لا يتطلب التطبيق الأساسي إنشاء حساب Hassoun أو تسجيل الدخول. يتم حفظ تفضيلات القراءة والإشارات المرجعية وتقدم الحفظ بشكل أساسي على جهازك.")}</Text></LegalCard>
-        <LegalCard title={t("Prayer email alerts", "تنبيهات الصلاة عبر البريد")}><Text style={styles.legalText}>{t("If you subscribe to prayer emails, Hassoun stores the email address, alert choices and prayer-location information needed to deliver those emails. You can manage or unsubscribe using the secure email-management flow.", "إذا اشتركت في تنبيهات الصلاة عبر البريد، يحفظ Hassoun البريد وخيارات التنبيه ومعلومات موقع الصلاة اللازمة للإرسال. يمكنك إدارة الاشتراك أو إلغاؤه من خلال مسار إدارة البريد الآمن.")}</Text>{onOpenEmailAlerts ? <Pressable onPress={onOpenEmailAlerts} style={styles.inlineButton}><Text style={styles.inlineButtonText}>{t("Manage prayer emails", "إدارة تنبيهات البريد")}</Text></Pressable> : null}</LegalCard>
-        <Pressable onPress={() => Linking.openURL(`${PUBLIC_BASE}/privacy-choices/`)} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>{t("Open public privacy choices page", "فتح صفحة خيارات الخصوصية")}</Text></Pressable>
-      </ScrollView>
-    );
-  }
+  if (page === "about") return <AboutHassounPage locale={locale} version={appVersion} onBack={() => setPage("root")} />;
 
   if (page === "privacy") {
     return (
@@ -362,18 +447,18 @@ function ContactPage({ locale, version, onBack }: { locale: "en" | "ar"; version
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: { padding: 18, paddingBottom: 42 },
+  content: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 48 },
   eyebrow: { color: "#17705b", fontSize: 10, fontWeight: "900", letterSpacing: 1.4 },
-  title: { color: "#173f35", fontSize: 29, fontWeight: "900", marginTop: 5 },
-  subtitle: { color: "#75827d", fontSize: 12, lineHeight: 18, marginTop: 5, marginBottom: 16 },
+  title: { color: "#173f35", fontSize: 27, fontWeight: "900", marginTop: 5 },
+  subtitle: { color: "#6f7f79", fontSize: 13, lineHeight: 20, marginTop: 5, marginBottom: 16 },
   section: { marginTop: 8 },
-  sectionLabel: { color: "#9a7c42", fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginBottom: 7, marginTop: 10 },
-  row: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 11, backgroundColor: "#fff", borderWidth: 1, borderColor: "#e1ded6", borderRadius: 20, paddingHorizontal: 13, marginBottom: 8 },
+  sectionLabel: { color: "#9a7c42", fontSize: 10, fontWeight: "900", letterSpacing: 1.2, marginBottom: 7, marginTop: 10 },
+  row: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: 11, backgroundColor: "#fff", borderWidth: 1, borderColor: "#e1ded6", borderRadius: 20, paddingHorizontal: 13, marginBottom: 8 },
   rowIcon: { width: 43, height: 43, borderRadius: 15, backgroundColor: "#edf5f1", alignItems: "center", justifyContent: "center" },
   rowEmoji: { fontSize: 21 },
   rowCopy: { flex: 1 },
-  rowTitle: { color: "#173f35", fontSize: 13, fontWeight: "900" },
-  rowText: { color: "#83908b", fontSize: 9, lineHeight: 13, marginTop: 3 },
+  rowTitle: { color: "#173f35", fontSize: 14, fontWeight: "900" },
+  rowText: { color: "#798782", fontSize: 11, lineHeight: 16, marginTop: 4 },
   arrow: { color: "#0b7057", fontSize: 27 },
   footer: { color: "#929995", textAlign: "center", fontSize: 9, marginTop: 18 },
   subHeader: { flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 10 },
@@ -383,7 +468,7 @@ const styles = StyleSheet.create({
   legalCard: { backgroundColor: "#fff", borderRadius: 20, borderWidth: 1, borderColor: "#e1ded6", padding: 15, marginBottom: 10 },
   legalTitle: { color: "#173f35", fontSize: 14, fontWeight: "900", marginBottom: 7 },
   legalBody: { gap: 8 },
-  legalText: { color: "#65736e", fontSize: 11, lineHeight: 18 },
+  legalText: { color: "#65736e", fontSize: 12, lineHeight: 19 },
   updated: { color: "#8a948f", fontSize: 10, marginBottom: 14 },
   aboutHero: { alignItems: "center", backgroundColor: "#0b654f", borderRadius: 26, padding: 24, marginBottom: 13 },
   aboutMoon: { color: "#f2cc72", fontSize: 45 },
@@ -399,7 +484,7 @@ const styles = StyleSheet.create({
   themeTime: { fontSize: 11, fontWeight: "900", marginTop: 2 },
   themeLabel: { color: "#264b41", fontSize: 9, fontWeight: "900", textAlign: "center", marginTop: 6 },
   layoutGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
-  layoutChoice: { width: "48.5%", minHeight: 110, borderRadius: 17, borderWidth: 1, borderColor: "#dfddd5", backgroundColor: "#fff", alignItems: "center", justifyContent: "center", padding: 8 },
+  layoutChoice: { width: "48.5%", minHeight: 124, borderRadius: 17, borderWidth: 1, borderColor: "#dfddd5", backgroundColor: "#fff", alignItems: "center", justifyContent: "center", padding: 8 },
   layoutChoiceActive: { borderColor: "#0b7057", backgroundColor: "#eaf5f0" },
   layoutMock: { borderRadius: 6, borderWidth: 2, borderColor: "#0b7057", alignItems: "center", justifyContent: "center" },
   layoutMockWide: { width: 67, height: 38 },
@@ -407,8 +492,8 @@ const styles = StyleSheet.create({
   layoutMockVertical: { width: 32, height: 60 },
   layoutMockSlim: { width: 72, height: 22 },
   layoutMockLine: { width: "65%", height: 3, borderRadius: 2, backgroundColor: "#0b7057" },
-  layoutTitle: { color: "#173f35", fontSize: 10, fontWeight: "900", marginTop: 7, textAlign: "center" },
-  layoutNote: { color: "#8a948f", fontSize: 7, lineHeight: 10, textAlign: "center", marginTop: 3 },
+  layoutTitle: { color: "#173f35", fontSize: 12, fontWeight: "900", marginTop: 7, textAlign: "center" },
+  layoutNote: { color: "#7d8a85", fontSize: 10, lineHeight: 14, textAlign: "center", marginTop: 3 },
   previewStage: { alignItems: "center", marginBottom: 6 },
   previewIslamicPattern: { position: "absolute", top: 5, left: 4, right: 4, bottom: 4, opacity: .16, justifyContent: "space-between", overflow: "hidden" }, previewPatternText: { fontSize: 22, letterSpacing: 8, textAlign: "center" }, previewPatternMosque: { fontSize: 20, letterSpacing: 7, textAlign: "center", marginBottom: 4 },
   widgetRichPreview: { width: "100%", minHeight: 184, borderRadius: 25, borderWidth: 1, padding: 14 },
@@ -419,33 +504,33 @@ const styles = StyleSheet.create({
   previewLogo: { width: 42, height: 42 },
   previewBrandBlock: { flex: 1 },
   previewBrand: { fontSize: 11, fontWeight: "900" },
-  previewTiny: { fontSize: 7, fontWeight: "800" },
-  previewPrayerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 6 }, previewSide: { flex: 1 }, previewCountdownCenter: { minWidth: 64, minHeight: 48, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }, previewCountdownCircle: { width: 66, height: 66, borderRadius: 33, backgroundColor: "#F2E0A8" }, previewCountdownPill: { minWidth: 76, minHeight: 42, borderRadius: 22, backgroundColor: "rgba(0,0,0,.12)" }, previewCountdownBig: { fontSize: 11, fontWeight: "900" }, previewCountdownLabel: { fontSize: 5.5, fontWeight: "900", marginTop: 1 },
+  previewTiny: { fontSize: 9, fontWeight: "800" },
+  previewPrayerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 6 }, previewSide: { flex: 1 }, previewCountdownCenter: { minWidth: 64, minHeight: 48, borderRadius: 20, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }, previewCountdownCircle: { width: 66, height: 66, borderRadius: 33, backgroundColor: "#F2E0A8" }, previewCountdownPill: { minWidth: 76, minHeight: 42, borderRadius: 22, backgroundColor: "rgba(0,0,0,.12)" }, previewCountdownBig: { fontSize: 11, fontWeight: "900" }, previewCountdownLabel: { fontSize: 8, fontWeight: "900", marginTop: 1 },
   previewPrayer: { fontSize: 27, fontWeight: "900" },
   previewArabic: { fontSize: 10, marginTop: 1 },
   previewTimeBlock: { alignItems: "flex-end" },
   previewTime: { fontSize: 18, fontWeight: "900" },
   previewCountdown: { fontSize: 9, fontWeight: "900", marginTop: 4 },
-  previewMeta: { fontSize: 8, marginTop: 6 },
+  previewMeta: { fontSize: 10, marginTop: 6 },
   previewPrayerList: { flexDirection: "row", gap: 4, marginTop: 12 },
   previewPrayerListVertical: { gap: 5, marginTop: 12 },
-  previewPrayerChip: { flex: 1, borderWidth: 1, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 4, textAlign: "center", fontSize: 7, fontWeight: "900" },
+  previewPrayerChip: { flex: 1, borderWidth: 1, borderRadius: 9, paddingVertical: 7, paddingHorizontal: 4, textAlign: "center", fontSize: 9, fontWeight: "900" },
   slimPreviewRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 7 },
   slimPrayer: { fontSize: 18, fontWeight: "900" },
   slimTime: { fontSize: 15, fontWeight: "900" },
   slimCountdown: { fontSize: 11, fontWeight: "900" },
-  previewHint: { color: "#7e8a85", fontSize: 9, lineHeight: 14, marginBottom: 8 },
+  previewHint: { color: "#74817c", fontSize: 11, lineHeight: 16, marginBottom: 8 },
   lockPreview: { borderRadius: 18, backgroundColor: "#566A79", padding: 11, marginBottom: 5 },
   lockPreviewTop: { flexDirection: "row", alignItems: "center", gap: 7 },
   lockPreviewLogo: { width: 32, height: 32 },
   lockPreviewBrand: { color: "#F4D26F", fontSize: 9, fontWeight: "900" },
-  lockPreviewSub: { color: "#fff", fontSize: 6, fontWeight: "800" },
+  lockPreviewSub: { color: "#fff", fontSize: 8, fontWeight: "800" },
   lockPreviewTime: { color: "#fff", fontSize: 10, fontWeight: "900", marginLeft: "auto" },
   lockPrayerRow: { flexDirection: "row", gap: 4, marginTop: 9 },
-  lockPrayerText: { flex: 1, color: "#fff", borderWidth: 1, borderColor: "#55FFFFFF", borderRadius: 7, paddingVertical: 5, textAlign: "center", fontSize: 5.5, fontWeight: "900" },
+  lockPrayerText: { flex: 1, color: "#fff", borderWidth: 1, borderColor: "#55FFFFFF", borderRadius: 7, paddingVertical: 6, textAlign: "center", fontSize: 8, fontWeight: "900" },
   lockPrayerActive: { color: "#F4D26F", borderColor: "#F4D26F" },
   toggleRow: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#fff", borderRadius: 17, borderWidth: 1, borderColor: "#e2dfd7", paddingHorizontal: 14, marginBottom: 7 },
-  toggleLabel: { color: "#264b41", fontSize: 12, fontWeight: "800" }, optionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 8 }, optionChip: { minWidth: "22%", flexGrow: 1, minHeight: 43, borderRadius: 14, backgroundColor: "#fff", borderWidth: 1, borderColor: "#dedbd3", alignItems: "center", justifyContent: "center", paddingHorizontal: 8 }, optionChipActive: { backgroundColor: "#0b654f", borderColor: "#0b654f" }, optionChipText: { color: "#53645e", fontSize: 8.5, fontWeight: "900", textAlign: "center" }, optionChipTextActive: { color: "#fff" },
+  toggleLabel: { color: "#264b41", fontSize: 12, fontWeight: "800" }, optionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 8 }, optionChip: { minWidth: "22%", flexGrow: 1, minHeight: 43, borderRadius: 14, backgroundColor: "#fff", borderWidth: 1, borderColor: "#dedbd3", alignItems: "center", justifyContent: "center", paddingHorizontal: 8 }, optionChipActive: { backgroundColor: "#0b654f", borderColor: "#0b654f" }, optionChipText: { color: "#53645e", fontSize: 10.5, fontWeight: "900", textAlign: "center" }, optionChipTextActive: { color: "#fff" },
   primaryButton: { minHeight: 52, backgroundColor: "#0b654f", borderRadius: 17, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, marginTop: 10 },
   primaryButtonText: { color: "#fff", fontSize: 12, fontWeight: "900" },
   secondaryButton: { minHeight: 50, backgroundColor: "#edf5f1", borderRadius: 17, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, marginTop: 8, marginBottom: 10 },

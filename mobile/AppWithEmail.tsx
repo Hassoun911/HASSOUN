@@ -1,8 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
-import { useEffect, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
 import {
-  AppState,
   Modal,
   Pressable,
   ScrollView,
@@ -22,16 +22,33 @@ import BrandMark from "./src/BrandMark";
 import { STORAGE_KEYS } from "./src/config";
 import { configureNotificationChannels } from "./src/notifications";
 import { registerDeviceForServerPush } from "./src/push";
-import SystemMessageTicker from "./src/SystemMessageTicker";
+import {
+  DEFAULT_RUNTIME_CONFIG,
+  loadHassounRuntimeConfig,
+  versionIsBelow,
+  type HassounRuntimeConfig
+} from "./src/remoteConfig";
 
-async function syncServerPush(locale: "en" | "ar", allowPrompt: boolean) {
-  let permission = await Notifications.getPermissionsAsync();
-  if (!permission.granted && allowPrompt && permission.canAskAgain) {
-    permission = await Notifications.requestPermissionsAsync();
+
+class EmailFeatureBoundary extends Component<{ children: ReactNode; locale: "en" | "ar"; onClose: () => void }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.warn("Hassoun email alerts UI error", error, info.componentStack); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return <View style={styles.emailErrorCard}><BrandMark size={58}/><Text style={styles.emailErrorTitle}>{this.props.locale === "ar" ? "تعذر فتح تنبيهات البريد" : "Email alerts could not open"}</Text><Text style={styles.emailErrorText}>{this.props.locale === "ar" ? "لم يتوقف Hassoun. أغلق هذه الشاشة وحاول مرة أخرى أو استخدم اتصل بنا إذا استمرت المشكلة." : "Hassoun is still running. Close this screen and try again, or use Contact us if the problem continues."}</Text><Pressable onPress={this.props.onClose} style={styles.emailErrorButton}><Text style={styles.emailErrorButtonText}>{this.props.locale === "ar" ? "إغلاق" : "Close safely"}</Text></Pressable></View>;
   }
-  if (!permission.granted) return false;
-  await registerDeviceForServerPush(locale);
-  return true;
+}
+
+function RuntimeBlock({ title, message }: { title: string; message: string }) {
+  return (
+    <SafeAreaView style={styles.runtimeBlock} edges={["top", "bottom", "left", "right"]}>
+      <BrandMark size={86} />
+      <Text style={styles.runtimeEyebrow}>HASSOUN</Text>
+      <Text style={styles.runtimeTitle}>{title}</Text>
+      <Text style={styles.runtimeMessage}>{message}</Text>
+    </SafeAreaView>
+  );
 }
 
 function AppWithEmailShell() {
@@ -39,37 +56,21 @@ function AppWithEmailShell() {
   const [visible, setVisible] = useState(false);
   const [locale, setLocale] = useState<"en" | "ar">("en");
   const [completion, setCompletion] = useState<EmailSignupCompletion | null>(null);
+  const [runtime, setRuntime] = useState<HassounRuntimeConfig>(DEFAULT_RUNTIME_CONFIG);
 
   useEffect(() => {
-    let currentLocale: "en" | "ar" = "en";
+    void loadHassounRuntimeConfig().then(setRuntime).catch(() => undefined);
     void (async () => {
       await configureNotificationChannels();
       const saved = await AsyncStorage.getItem(STORAGE_KEYS.locale);
-      currentLocale = saved === "ar" ? "ar" : "en";
+      const currentLocale = saved === "ar" ? "ar" : "en";
       setLocale(currentLocale);
-      await syncServerPush(currentLocale, true).catch(() => false);
+
+      const permission = await Notifications.getPermissionsAsync();
+      if (permission.granted) {
+        await registerDeviceForServerPush(currentLocale).catch(() => undefined);
+      }
     })().catch(() => undefined);
-
-    const subscription = AppState.addEventListener("change", state => {
-      if (state !== "active") return;
-      void AsyncStorage.getItem(STORAGE_KEYS.locale).then(saved => {
-        const activeLocale = saved === "ar" ? "ar" : "en";
-        setLocale(activeLocale);
-        return syncServerPush(activeLocale, false);
-      }).catch(() => undefined);
-    });
-
-    const refreshTimer = setInterval(() => {
-      void AsyncStorage.getItem(STORAGE_KEYS.locale).then(saved => {
-        const activeLocale = saved === "ar" ? "ar" : "en";
-        return syncServerPush(activeLocale, false);
-      }).catch(() => undefined);
-    }, 6 * 60 * 60 * 1000);
-
-    return () => {
-      subscription.remove();
-      clearInterval(refreshTimer);
-    };
   }, []);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ function AppWithEmailShell() {
   }, [completion]);
 
   const open = async () => {
+    if (!runtime.emailEnabled) return;
     const saved = await AsyncStorage.getItem(STORAGE_KEYS.locale);
     setLocale(saved === "ar" ? "ar" : "en");
     setCompletion(null);
@@ -90,12 +92,44 @@ function AppWithEmailShell() {
     setCompletion(summary);
   };
 
+  const currentVersion = Constants.expoConfig?.version ?? "0.0.0";
+  const updateRequired = runtime.forceUpdate && versionIsBelow(currentVersion, runtime.minimumVersion);
+
+  if (runtime.maintenanceMode) {
+    return (
+      <RuntimeBlock
+        title={locale === "ar" ? "الصيانة جارية" : "Maintenance in progress"}
+        message={locale === "ar"
+          ? "نقوم حالياً بتحديث Hassoun. يرجى المحاولة مرة أخرى قريباً. مواقيت الصلاة والتنبيهات المجدولة على جهازك لا تتغير بسبب هذه الشاشة."
+          : "Hassoun is being updated right now. Please check again shortly. Prayer times and alarms already scheduled on your device are not changed by this screen."}
+      />
+    );
+  }
+
+  if (updateRequired) {
+    return (
+      <RuntimeBlock
+        title={locale === "ar" ? "يلزم تحديث Hassoun" : "Hassoun update required"}
+        message={locale === "ar"
+          ? `الإصدار ${runtime.minimumVersion} أو أحدث مطلوب للمتابعة. يرجى تحديث التطبيق من المتجر.`
+          : `Version ${runtime.minimumVersion} or newer is required to continue. Please update Hassoun from your app store.`}
+      />
+    );
+  }
+
   const receiptTop = Math.max(insets.top, 12) + 12;
+  const bannerTop = Math.max(insets.top, 8) + 8;
 
   return (
     <View style={styles.root}>
-      <SystemMessageTicker locale={locale} />
-      <App onOpenEmailAlerts={() => void open()} />
+      <App onOpenEmailAlerts={runtime.emailEnabled ? () => void open() : undefined} />
+
+      {runtime.systemBanner.enabled && (runtime.systemBanner.title || runtime.systemBanner.message) ? (
+        <View style={[styles.systemBanner, { top: bannerTop }]}>
+          {runtime.systemBanner.title ? <Text style={styles.systemBannerTitle}>{runtime.systemBanner.title}</Text> : null}
+          {runtime.systemBanner.message ? <Text style={styles.systemBannerMessage}>{runtime.systemBanner.message}</Text> : null}
+        </View>
+      ) : null}
 
       {completion ? (
         <View style={[styles.receipt, { top: receiptTop }]}>
@@ -141,7 +175,7 @@ function AppWithEmailShell() {
         </View>
       ) : null}
 
-      <Modal visible={visible} animationType="slide" onRequestClose={() => setVisible(false)}>
+      <Modal visible={visible && runtime.emailEnabled} animationType="slide" onRequestClose={() => setVisible(false)}>
         <SafeAreaView style={styles.modalSafe} edges={["top", "bottom", "left", "right"]}>
           <View style={styles.modalHeader}>
             <BrandMark size={44} />
@@ -177,7 +211,7 @@ function AppWithEmailShell() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <EmailSignupCard locale={locale} onComplete={completeSignup} />
+            <EmailFeatureBoundary locale={locale} onClose={() => setVisible(false)}><EmailSignupCard locale={locale} onComplete={completeSignup} /></EmailFeatureBoundary>
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -194,7 +228,19 @@ export default function AppWithEmail() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#f7f4ec" },
+  emailErrorCard: { margin: 18, padding: 22, borderRadius: 22, backgroundColor: "#fff8ed", borderWidth: 1, borderColor: "#e7d4a7", alignItems: "center" },
+  emailErrorTitle: { color: "#173f35", fontSize: 20, fontWeight: "900", marginTop: 12, textAlign: "center" },
+  emailErrorText: { color: "#6e756e", fontSize: 12, lineHeight: 19, textAlign: "center", marginTop: 8 },
+  emailErrorButton: { marginTop: 16, minHeight: 46, paddingHorizontal: 18, borderRadius: 14, backgroundColor: "#0b654f", alignItems: "center", justifyContent: "center" },
+  emailErrorButtonText: { color: "#fff", fontSize: 13, fontWeight: "900" },
+  root: { flex: 1 },
+  runtimeBlock: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#f6f0e5", paddingHorizontal: 28 },
+  runtimeEyebrow: { color: "#9a8a70", fontSize: 10, fontWeight: "900", letterSpacing: 2, marginTop: 16 },
+  runtimeTitle: { color: "#153f35", fontSize: 28, lineHeight: 34, fontWeight: "900", textAlign: "center", marginTop: 8 },
+  runtimeMessage: { color: "#65756f", fontSize: 14, lineHeight: 22, textAlign: "center", maxWidth: 430, marginTop: 12 },
+  systemBanner: { position: "absolute", left: 14, right: 14, zIndex: 90, backgroundColor: "#153f35", borderRadius: 16, paddingHorizontal: 15, paddingVertical: 12, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
+  systemBannerTitle: { color: "#fffdf8", fontSize: 14, fontWeight: "900" },
+  systemBannerMessage: { color: "#e4eee9", fontSize: 12, lineHeight: 17, marginTop: 3 },
   receipt: {
     position: "absolute",
     left: 16,

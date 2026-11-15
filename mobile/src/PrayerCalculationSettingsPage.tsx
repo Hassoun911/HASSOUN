@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
@@ -5,11 +6,11 @@ import {
   METHOD_OPTIONS,
   loadPrayerCalculationPreferences,
   savePrayerCalculationPreferences,
-  type PrayerCalculationPreferences,
-  type PrayerScheduleSource
+  type PrayerCalculationPreferences
 } from "./prayerCalculationSettings";
 import { loadSavedPrayerContext, previewPrayerDayForPreferences } from "./prayerData";
 import type { Locale } from "./types";
+import NearbyMosquesPage from "./NearbyMosquesPage";
 
 type Props = { locale: Locale; onBack: () => void };
 
@@ -61,6 +62,22 @@ export default function PrayerCalculationSettingsPage({ locale, onBack }: Props)
   const [savedLabel, setSavedLabel] = useState<string>("");
   const [preview, setPreview] = useState<{ asr?: string; source?: string } | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [mosquesOpen, setMosquesOpen] = useState(false);
+  const [mosquesRouteReady, setMosquesRouteReady] = useState(false);
+
+  // HASSOUN_MOSQUES_CHILD_RESUME_V1
+  useEffect(() => {
+    let alive = true;
+    void AsyncStorage.getItem("hassoun:prayer-calc-child-route:v1")
+      .then((saved) => { if (alive && saved === "mosques") setMosquesOpen(true); })
+      .finally(() => { if (alive) setMosquesRouteReady(true); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!mosquesRouteReady) return;
+    void AsyncStorage.setItem("hassoun:prayer-calc-child-route:v1", mosquesOpen ? "mosques" : "calculation").catch(() => undefined);
+  }, [mosquesOpen, mosquesRouteReady]);
 
   useEffect(() => {
     void loadPrayerCalculationPreferences().then(setPrefs);
@@ -71,7 +88,7 @@ export default function PrayerCalculationSettingsPage({ locale, onBack }: Props)
     });
   }, []);
 
-  const officialActive = savedSource === "windsor_islamic_association" && prefs.scheduleSource !== "calculated";
+  const officialActive = savedSource === "windsor_islamic_association";
   const calculatedControlsEnabled = !officialActive;
   const sourceSummary = useMemo(() => {
     if (officialActive) return t("Currently using: Windsor Islamic Association official schedule", "المصدر الحالي: جدول جمعية وندسور الإسلامية الرسمي");
@@ -102,7 +119,7 @@ export default function PrayerCalculationSettingsPage({ locale, onBack }: Props)
     Alert.alert(t("Saved", "تم الحفظ"), t("Prayer calculation settings are now active across Hassoun.", "تم تفعيل إعدادات حساب الصلاة في حسون."));
   };
 
-  const setSource = (scheduleSource: PrayerScheduleSource) => setPrefs((p) => ({ ...p, scheduleSource }));
+  if (mosquesOpen) return <NearbyMosquesPage locale={locale} onBack={() => { setMosquesOpen(false); void loadPrayerCalculationPreferences().then(setPrefs); }} />;
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
@@ -117,21 +134,34 @@ export default function PrayerCalculationSettingsPage({ locale, onBack }: Props)
       <View style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>{sourceSummary}</Text>
         <Text style={styles.summaryText}>{officialActive
-          ? t("The official mosque timetable controls the five prayer times. Calculation options below do not alter that timetable.", "الجدول الرسمي للمسجد يتحكم بمواقيت الصلوات الخمس، لذلك إعدادات الحساب أدناه لا تغيّر هذا الجدول.")
-          : t("Your calculation profile controls the prayer schedule and is synced to supported Hassoun displays.", "ملف الحساب الخاص بك يتحكم بالمواقيت ويتم مزامنته مع شاشات حسون المدعومة.")}
+          ? t("Your GPS is in Windsor and official Windsor data is available today, so the official timetable is active. Mosque selection does not affect this.", "الجدول الرسمي للمسجد يتحكم بمواقيت الصلوات الخمس، لذلك إعدادات الحساب أدناه لا تغيّر هذا الجدول.")
+          : t("Your GPS is outside the official Windsor data path, so the calculation profile below is applied to your GPS location.", "ملف الحساب الخاص بك يتحكم بالمواقيت ويتم مزامنته مع شاشات حسون المدعومة.")}
         </Text>
       </View>
 
       <Text style={styles.sectionLabel}>{t("PRAYER TIME SOURCE", "مصدر مواقيت الصلاة")}</Text>
-      <SourceCard active={prefs.scheduleSource === "smart"} onPress={() => setSource("smart")} title={t("Smart Automatic", "تلقائي ذكي")} body={t("Use a trusted official local schedule when Hassoun has one; otherwise calculate from your GPS location.", "استخدم جدولاً محلياً رسمياً موثوقاً عند توفره، وإلا احسب المواقيت من موقع GPS.")} />
-      <SourceCard active={prefs.scheduleSource === "official"} onPress={() => setSource("official")} title={t("Official Local Mosque Schedule", "الجدول الرسمي للمسجد المحلي")} body={t("Prefer a trusted official schedule when one is available for your location.", "فضّل الجدول الرسمي الموثوق عند توفره لموقعك.")} />
-      <SourceCard active={prefs.scheduleSource === "calculated"} onPress={() => setSource("calculated")} title={t("Calculated Prayer Times", "مواقيت محسوبة")} body={t("Always use GPS + your method, Asr school, high-latitude rule and minute tuning.", "استخدم دائماً GPS مع الطريقة ومذهب العصر وقاعدة خطوط العرض وضبط الدقائق.")} />
+      <View style={styles.notice}>
+        <Text style={styles.noticeTitle}>{t("Automatic by GPS", "تلقائي حسب GPS")}</Text>
+        <Text style={styles.noticeText}>{t(
+          "Hassoun always uses your phone GPS. In Windsor, official Hassoun/Windsor data is used when available for today. Everywhere else — or if Windsor data is unavailable — prayer times are calculated from GPS. Choosing a mosque never changes prayer times.",
+          "يستخدم حسون دائماً موقع GPS للهاتف. في وندسور تُستخدم بيانات حسون/وندسور الرسمية عند توفرها لليوم. في أي مكان آخر، أو إذا لم تتوفر بيانات وندسور، تُحسب المواقيت من GPS. اختيار مسجد لا يغيّر مواقيت الصلاة."
+        )}</Text>
+      </View>
+      <Pressable onPress={() => setMosquesOpen(true)} style={[styles.mosquesNearMeCard, prefs.locationMode === "mosque" && styles.mosquesNearMeCardActive]}>
+        <View style={styles.mosquesNearMeIcon}><Text style={styles.mosquesNearMeEmoji}>🕌</Text></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.mosquesNearMeTitle}>{t("Mosques Near Me", "المساجد القريبة مني")}</Text>
+          <Text style={styles.mosquesNearMeBody}>{prefs.locationMode === "mosque" && prefs.selectedMosque
+            ? t(`Selected mosque: ${prefs.selectedMosque.name}. Prayer times still use phone GPS. Tap to change.`, `المسجد المحدد: ${prefs.selectedMosque.name}. مواقيت الصلاة ما زالت تعتمد على GPS. اضغط للتغيير.`)
+            : t("Open nearby mosques for location, distance and directions. Prayer times continue to use phone GPS.", "افتح المساجد القريبة للموقع والمسافة والاتجاهات. مواقيت الصلاة تستمر بالاعتماد على GPS.")}</Text>
+        </View>
+        <Text style={styles.mosquesNearMeArrow}>›</Text>
+      </Pressable>
 
       {officialActive && (
         <View style={styles.notice}>
           <Text style={styles.noticeTitle}>{t("Official timetable is active", "الجدول الرسمي مفعّل")}</Text>
           <Text style={styles.noticeText}>{t("Method, Asr School, high-latitude rules and minute tuning are disabled because they do not affect the Windsor official timetable.", "تم تعطيل الطريقة ومذهب العصر وقواعد خطوط العرض وضبط الدقائق لأنها لا تؤثر على جدول وندسور الرسمي.")}</Text>
-          <Pressable style={styles.linkButton} onPress={() => setSource("calculated")}><Text style={styles.linkButtonText}>{t("Use calculated times instead", "استخدم المواقيت المحسوبة بدلاً من ذلك")}</Text></Pressable>
         </View>
       )}
 
@@ -170,12 +200,20 @@ export default function PrayerCalculationSettingsPage({ locale, onBack }: Props)
       </View>
 
       <Pressable style={styles.saveButton} onPress={() => { void save(); }}><Text style={styles.saveText}>{t("Save & use these settings", "حفظ واستخدام هذه الإعدادات")}</Text></Pressable>
-      <Text style={styles.footnote}>{t("Why this time? Hassoun shows the active source on this page. When calculated times are active, the method, Asr school, high-latitude rule and tuning above are the values used by the calculation request.", "لماذا هذا الوقت؟ يعرض حسون المصدر الفعلي في هذه الصفحة. وعند تفعيل المواقيت المحسوبة تُستخدم الطريقة ومذهب العصر وقاعدة خطوط العرض والضبط أعلاه في طلب الحساب.")}</Text>
+      <Text style={styles.footnote}>{t("Prayer source is automatic by GPS. Mosque choices are for finding, saving and navigating to mosques only; they never change the prayer calculation.", "لماذا هذا الوقت؟ يعرض حسون المصدر الفعلي في هذه الصفحة. وعند تفعيل المواقيت المحسوبة تُستخدم الطريقة ومذهب العصر وقاعدة خطوط العرض والضبط أعلاه في طلب الحساب.")}</Text>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  mosquesNearMeCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 15, borderRadius: 18, borderWidth: 1, borderColor: "#d6dbd5", backgroundColor: "#fff" },
+  mosquesNearMeCardActive: { borderColor: "#12624f", backgroundColor: "#edf6f2" },
+  mosquesNearMeIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: "#eef5f1", alignItems: "center", justifyContent: "center" },
+  mosquesNearMeEmoji: { fontSize: 22 },
+  mosquesNearMeTitle: { color: "#17463b", fontSize: 16, fontWeight: "900" },
+  mosquesNearMeBody: { color: "#68756f", fontSize: 11.5, lineHeight: 17, marginTop: 3 },
+  mosquesNearMeArrow: { color: "#0b654f", fontSize: 30, fontWeight: "700" },
+
   page: { flex: 1, backgroundColor: "#f4f2ea" }, content: { padding: 18, paddingBottom: 48, gap: 12 },
   header: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 4 }, back: { fontSize: 44, color: "#0c433a", lineHeight: 46 },
   title: { fontSize: 25, fontWeight: "800", color: "#153c35" }, location: { marginTop: 2, color: "#6a746f", fontSize: 13 },

@@ -3,9 +3,23 @@ import { syncCalculationToPairedDisplays } from "./displayCalculationSync";
 
 export type CalculationMode = "smart" | "manual";
 export type PrayerScheduleSource = "smart" | "official" | "calculated";
+export type PrayerLocationMode = "gps" | "mosque";
+
+export type SelectedMosque = {
+  id: string;
+  name: string;
+  displayName: string;
+  latitude: number;
+  longitude: number;
+  city?: string;
+  region?: string;
+  country?: string;
+};
 
 export type PrayerCalculationPreferences = {
   scheduleSource: PrayerScheduleSource;
+  locationMode: PrayerLocationMode;
+  selectedMosque: SelectedMosque | null;
   mode: CalculationMode;
   method: number;
   school: 0 | 1;
@@ -23,6 +37,8 @@ export const CALCULATION_PREFS_KEY = "hassoun:prayer-calculation:v2";
 
 export const DEFAULT_CALCULATION_PREFS: PrayerCalculationPreferences = {
   scheduleSource: "smart",
+  locationMode: "gps",
+  selectedMosque: null,
   mode: "smart",
   method: 2,
   school: 0,
@@ -48,10 +64,24 @@ export async function loadPrayerCalculationPreferences(): Promise<PrayerCalculat
     if (!raw) return DEFAULT_CALCULATION_PREFS;
     const parsed = JSON.parse(raw) as Partial<PrayerCalculationPreferences>;
     const scheduleSource: PrayerScheduleSource = parsed.scheduleSource === "official" || parsed.scheduleSource === "calculated" ? parsed.scheduleSource : "smart";
+    const candidate = parsed.selectedMosque as SelectedMosque | null | undefined;
+    const selectedMosque = candidate && Number.isFinite(Number(candidate.latitude)) && Number.isFinite(Number(candidate.longitude))
+      ? {
+          ...candidate,
+          latitude: Number(candidate.latitude),
+          longitude: Number(candidate.longitude),
+          id: String(candidate.id || `${candidate.latitude}:${candidate.longitude}`),
+          name: String(candidate.name || "Selected mosque"),
+          displayName: String(candidate.displayName || candidate.name || "Selected mosque")
+        }
+      : null;
+    const locationMode: PrayerLocationMode = parsed.locationMode === "mosque" && selectedMosque ? "mosque" : "gps";
     return {
       ...DEFAULT_CALCULATION_PREFS,
       ...parsed,
       scheduleSource,
+      locationMode,
+      selectedMosque,
       mode: parsed.mode === "manual" ? "manual" : "smart",
       school: parsed.school === 1 ? 1 : 0,
       highLatitude: parsed.highLatitude === 0 || parsed.highLatitude === 1 || parsed.highLatitude === 2 ? parsed.highLatitude : 3,

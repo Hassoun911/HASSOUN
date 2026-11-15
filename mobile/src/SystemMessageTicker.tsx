@@ -40,12 +40,15 @@ export default function SystemMessageTicker({ locale }: { locale: "en" | "ar" })
     let mounted = true;
     const load = async () => {
       try {
-        const response = await fetch(`${API}/app/runtime`, { headers: { "Cache-Control": "no-cache" } });
+        const response = await fetch(`${API}/app/runtime?ts=${Date.now()}`, {
+          headers: { "Cache-Control": "no-cache", Accept: "application/json" }
+        });
         if (!response.ok) return;
         const payload = await response.json() as RuntimePayload;
         if (mounted) setSetting(payload.settings?.scrolling_ticker);
       } catch {}
     };
+
     void load();
     const timer = setInterval(() => void load(), 20_000);
     const subscription = AppState.addEventListener("change", state => {
@@ -74,7 +77,7 @@ export default function SystemMessageTicker({ locale }: { locale: "en" | "ar" })
         toValue: -estimatedTextWidth,
         duration: Math.max(8_000, Math.min(32_000, text.length * 120 + 8_000)),
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: true
       })
     );
     animation.start();
@@ -103,14 +106,14 @@ const styles = StyleSheet.create({
     borderBottomColor: "#d7bd72",
     flexDirection: "row",
     alignItems: "center",
-    overflow: "hidden",
+    overflow: "hidden"
   },
   badge: {
     width: 42,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 2,
-    backgroundColor: "#0b5b47",
+    backgroundColor: "#0b5b47"
   },
   badgeText: { fontSize: 17 },
   track: { flex: 1, overflow: "hidden", height: 38, justifyContent: "center" },
@@ -120,6 +123,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 0.2,
-    minWidth: 220,
-  },
+    minWidth: 220
+  }
 });

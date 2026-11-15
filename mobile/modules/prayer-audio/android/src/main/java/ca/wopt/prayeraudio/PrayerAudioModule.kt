@@ -37,6 +37,10 @@ class PrayerAudioModule : Module() {
       mapOf("scheduled" to result.scheduled, "exact" to result.exact)
     }
 
+    AsyncFunction("stopPrayerAudioPlayback") {
+      context.stopService(Intent(context, PrayerAudioService::class.java))
+    }
+
     AsyncFunction("restoreExactPrayerAlarms") {
       PrayerAlarmScheduler.restoreSchedule(context)
       mapOf("exact" to PrayerAlarmScheduler.canScheduleExactAlarms(context))
@@ -45,6 +49,19 @@ class PrayerAudioModule : Module() {
     AsyncFunction("scheduleTestPrayerAlarm") { prayer: String, delaySeconds: Int ->
       val exact = PrayerAlarmScheduler.scheduleTest(context, prayer, delaySeconds)
       mapOf("exact" to exact)
+    }
+
+    Function("setRamadanMaghribMode") { enabled: Boolean ->
+      context.getSharedPreferences(PrayerAudioService.SETTINGS_PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(PrayerAudioService.KEY_RAMADAN_MAGHRIB, enabled)
+        .apply()
+      enabled
+    }
+
+    Function("getRamadanMaghribMode") {
+      context.getSharedPreferences(PrayerAudioService.SETTINGS_PREFS, Context.MODE_PRIVATE)
+        .getBoolean(PrayerAudioService.KEY_RAMADAN_MAGHRIB, false)
     }
 
     AsyncFunction("getCurrentDeviceLocation") { promise: Promise ->

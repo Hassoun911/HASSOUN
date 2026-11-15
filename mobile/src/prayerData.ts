@@ -9,6 +9,7 @@ import {
   type PrayerCalculationPreferences
 } from "./prayerCalculationSettings";
 import type { PrayerDay, PrayerFile, PrayerTimes } from "./types";
+import { recordPrayerLocationUsage } from "./locationUsage";
 
 export type PrayerLocation = {
   latitude: number;
@@ -83,6 +84,18 @@ function localDateKey() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+function dateKeyInZone(timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const values: Record<string, string> = {};
+  for (const part of parts) values[part.type] = part.value;
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function monthWindow() {
   const now = new Date();
   return [0, 1].map((offset) => {
@@ -123,11 +136,11 @@ async function getPermission(force: boolean) {
 }
 
 async function getPosition(force: boolean) {
-  const services = await Location.hasServicesEnabledAsync();
-  if (!services) throw new Error("LOCATION_SERVICES_DISABLED");
-
   const last = await Location.getLastKnownPositionAsync({ maxAge: 30 * 60 * 1000, requiredAccuracy: 10000 });
   if (last && !force) return last;
+
+  const services = await Location.hasServicesEnabledAsync();
+  if (!services) throw new Error("LOCATION_SERVICES_DISABLED");
 
   return timeout(
     Location.getCurrentPositionAsync({ accuracy: force ? Location.Accuracy.High : Location.Accuracy.Balanced }),
@@ -332,19 +345,24 @@ async function fetchOfficialWindsorSchedule(): Promise<PrayerTimes> {
   return data;
 }
 
-function windsorFallback(): LoadedPrayerTimes {
-  const prayerTimes = (bundledSchedule as PrayerFile).prayer_times;
+function locationRequiredFallback(): LoadedPrayerTimes {
   return {
-    prayerTimes,
+    prayerTimes: {},
     live: false,
-    location: { latitude: WINDSOR.latitude, longitude: WINDSOR.longitude, timezone: WINDSOR_TIME_ZONE, label: CITY_LABEL, source: "saved" },
+    location: {
+      latitude: 0,
+      longitude: 0,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      label: "Location required",
+      source: "saved"
+    },
     calculationMethod: null,
     calculatedAt: new Date().toISOString()
   };
 }
 
 export async function loadInitialPrayerTimes(): Promise<LoadedPrayerTimes> {
-  return (await loadSavedPrayerContext()) || windsorFallback();
+  return (await loadSavedPrayerContext()) || locationRequiredFallback();
 }
 
 async function refreshRemoteInBackground(base: LoadedPrayerTimes, preferences: PrayerCalculationPreferences) {
@@ -370,58 +388,77 @@ async function refreshRemoteInBackground(base: LoadedPrayerTimes, preferences: P
 export async function loadPrayerTimes(options: { forceLocation?: boolean } = {}): Promise<LoadedPrayerTimes> {
   const force = Boolean(options.forceLocation);
   const saved = await loadSavedPrayerContext();
-  const fallback = saved || windsorFallback();
+  const preferences = await loadPrayerCalculationPreferences();
+  const fallback = saved || locationRequiredFallback();
+  // Mosque selection is discovery/navigation only. Prayer times always follow the phone GPS.
 
+  let position: Location.LocationObject | null = null;
   try {
     const granted = await getPermission(force);
-    if (!granted) return fallback;
-    const position = await getPosition(force);
-    const latitude = position.coords.latitude;
-    const longitude = position.coords.longitude;
-    const preferences = await loadPrayerCalculationPreferences();
-    const nearWindsor = isNearWindsor(latitude, longitude);
-    const shouldUseOfficialWindsor = nearWindsor && preferences.scheduleSource !== "calculated";
-
-    if (shouldUseOfficialWindsor) {
-      // Do not overwrite a previously downloaded, valid Windsor timetable with the
-      // older packaged file whenever a user is temporarily offline.
-      const cachedWindsor = saved && isNearWindsor(saved.location.latitude, saved.location.longitude)
-        && saved.location.source !== "aladhan" && saved.location.source !== "local_calculation"
-        ? saved.prayerTimes : null;
-      let prayerTimes: PrayerTimes;
-      let live = false;
-      try {
-        prayerTimes = await fetchOfficialWindsorSchedule();
-        live = true;
-      } catch {
-        prayerTimes = cachedWindsor || (bundledSchedule as PrayerFile).prayer_times;
-      }
-      const context: LoadedPrayerTimes = {
-        prayerTimes,
-        live,
-        location: { latitude, longitude, timezone: WINDSOR_TIME_ZONE, label: CITY_LABEL, source: "windsor_islamic_association" },
-        calculationMethod: null,
-        calculatedAt: new Date().toISOString()
-      };
-      if (live || !cachedWindsor) await saveContext(context);
-      return context;
-    }
-
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || saved?.location.timezone || "UTC";
-    const local = calculateLocalWindow(latitude, longitude, timezone, preferences);
-    const context: LoadedPrayerTimes = {
-      prayerTimes: local.prayerTimes,
-      live: true,
-      location: { latitude, longitude, timezone, label: fastLocationLabel(latitude, longitude, saved), source: "local_calculation" },
-      calculationMethod: local.method,
-      calculatedAt: new Date().toISOString()
-    };
-
-    await saveContext(context);
-    void refreshRemoteInBackground(context, preferences);
-    return context;
+    if (granted) position = await getPosition(force);
   } catch (error) {
     if (force && !saved) throw error;
     return fallback;
+  }
+
+  if (!position) return fallback;
+
+  // HASSOUN_GPS_ONLY_PRAYER_SOURCE_V1
+  // The mosque directory is informational only. The phone GPS decides Windsor
+  // versus calculated prayer times and is the only coordinate source here.
+  const latitude = position.coords.latitude;
+  const longitude = position.coords.longitude;
+  const nearWindsor = isNearWindsor(latitude, longitude);
+  const windsorDateKey = dateKeyInZone(WINDSOR_TIME_ZONE);
+  const officialWindsorAvailable = Boolean((bundledSchedule as PrayerFile).prayer_times[windsorDateKey]);
+  const shouldUseOfficialWindsor = nearWindsor && officialWindsorAvailable;
+
+  if (shouldUseOfficialWindsor) {
+    const context: LoadedPrayerTimes = {
+      prayerTimes: (bundledSchedule as PrayerFile).prayer_times,
+      live: true,
+      location: {
+        latitude,
+        longitude,
+        timezone: WINDSOR_TIME_ZONE,
+        label: CITY_LABEL,
+        source: "windsor_islamic_association"
+      },
+      calculationMethod: null,
+      calculatedAt: new Date().toISOString()
+    };
+    await saveContext(context);
+    return context;
+  }
+
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || saved?.location.timezone || "UTC";
+  const local = calculateLocalWindow(latitude, longitude, timezone, preferences);
+  const localLabel = fastLocationLabel(latitude, longitude, saved);
+  const localContext: LoadedPrayerTimes = {
+    prayerTimes: local.prayerTimes,
+    live: true,
+    location: { latitude, longitude, timezone, label: localLabel, source: "local_calculation" },
+    calculationMethod: local.method,
+    calculatedAt: new Date().toISOString()
+  };
+
+  // Keep a safe on-device schedule first, then prefer the coordinate API result.
+  await saveContext(localContext);
+  try {
+    const [remote, city] = await Promise.all([
+      fetchRemoteWindow(latitude, longitude, preferences),
+      resolveCity(latitude, longitude)
+    ]);
+    const refreshed: LoadedPrayerTimes = {
+      prayerTimes: remote.prayerTimes,
+      live: true,
+      location: { latitude, longitude, timezone: remote.timezone, label: city, source: "aladhan" },
+      calculationMethod: remote.selectedMethod,
+      calculatedAt: new Date().toISOString()
+    };
+    await saveContext(refreshed);
+    return refreshed;
+  } catch {
+    return localContext;
   }
 }

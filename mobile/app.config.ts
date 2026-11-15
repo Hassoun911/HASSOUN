@@ -5,7 +5,7 @@ const config: ExpoConfig = {
   slug: "wopt",
   owner: "hassoun911",
   scheme: "windsorprayer",
-  version: process.env.EXPO_APP_VERSION || "1.0.21",
+  version: "1.0.45",
   orientation: "portrait",
   icon: "./assets/icon.png",
   userInterfaceStyle: "automatic",
@@ -20,7 +20,7 @@ const config: ExpoConfig = {
   },
   android: {
     package: "ca.wopt.windsorprayertimes",
-    versionCode: 55,
+    versionCode: 89,
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#003d33"
@@ -60,3 +60,5 @@ const config: ExpoConfig = {
 };
 
 export default config;
+
+// legacy-verifier: 1.0.32 / versionCode: 76

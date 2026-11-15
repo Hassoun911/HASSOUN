@@ -4,55 +4,6 @@ import { loadPhonePrayerAlertPreferences, type PrayerAlertPreferences } from "./
 import { buildPrayerEvents } from "./events";
 import type { PrayerKey, PrayerTimes } from "./types";
 
-let exactAlarmSetupStarted = false;
-let exactAlarmSettingsOpenedThisSession = false;
-
-async function restoreExactAlarmsIfAvailable() {
-  if (Platform.OS !== "android" || !PrayerAudio) return false;
-  try {
-    if (!PrayerAudio.canScheduleExactAlarms()) return false;
-    await PrayerAudio.restoreExactPrayerAlarms();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function requestExactAlarmAccessIfNeeded() {
-  if (Platform.OS !== "android" || !PrayerAudio) return;
-  if (await restoreExactAlarmsIfAvailable()) return;
-  if (AppState.currentState !== "active" || exactAlarmSettingsOpenedThisSession) return;
-
-  exactAlarmSettingsOpenedThisSession = true;
-  try {
-    PrayerAudio.openExactAlarmSettings();
-  } catch {
-    // Alerts settings and Test Adhan remain a manual recovery path.
-  }
-}
-
-function startFirstLaunchExactAlarmSetup() {
-  if (Platform.OS !== "android" || !PrayerAudio || exactAlarmSetupStarted) return;
-  exactAlarmSetupStarted = true;
-
-  // Do not launch Android special-access UI while React Native is still mounting.
-  // Waiting until the Activity is active makes this reliable on Samsung/Android 14+.
-  const timer = setTimeout(() => {
-    void requestExactAlarmAccessIfNeeded();
-  }, 1800);
-
-  AppState.addEventListener("change", (state) => {
-    if (state !== "active") return;
-    void restoreExactAlarmsIfAvailable().then((granted) => {
-      if (!granted) void requestExactAlarmAccessIfNeeded();
-    });
-  });
-
-  // Keep the timer referenced until it fires; it is intentionally process-lifetime setup.
-  void timer;
-}
-
-startFirstLaunchExactAlarmSetup();
 
 export type AndroidPrayerAudioResult = {
   count: number;
@@ -102,5 +53,12 @@ export function canScheduleAndroidExactAlarms() {
 export function openExactAlarmSettings() {
   if (Platform.OS === "android" && PrayerAudio) {
     PrayerAudio.openExactAlarmSettings();
+  }
+}
+
+
+export async function stopAndroidPrayerAudioPlayback() {
+  if (Platform.OS === "android" && PrayerAudio) {
+    await PrayerAudio.stopPrayerAudioPlayback();
   }
 }

@@ -1,5 +1,6 @@
 import { addDateDays, dateKeyInZone, localToDateInZone } from "./time";
 import { PRAYER_KEYS, type PrayerEvent, type PrayerEventKind, type PrayerTimes } from "./types";
+import { WINDSOR_TIME_ZONE } from "./config";
 
 const OFFSETS: Array<{ kind: PrayerEventKind; minutes: number }> = [
   { kind: "twenty", minutes: -20 },
@@ -7,7 +8,7 @@ const OFFSETS: Array<{ kind: PrayerEventKind; minutes: number }> = [
   { kind: "athan", minutes: 0 }
 ];
 
-export function buildPrayerEvents(prayerTimes: PrayerTimes, days: number, now = new Date(), timeZone = "America/Toronto") {
+export function buildPrayerEvents(prayerTimes: PrayerTimes, days: number, now = new Date(), timeZone = WINDSOR_TIME_ZONE) {
   const events: PrayerEvent[] = [];
   const today = dateKeyInZone(now, timeZone);
 

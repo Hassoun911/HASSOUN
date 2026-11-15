@@ -1,28 +1,37 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
   Alert,
   AppState,
+  BackHandler,
   Image,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
-  View
+  View,
+  useWindowDimensions,
+  Platform
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import QuizGamesHub from "./src/QuizGamesHub";
 import IslamicEventsPage from "./src/IslamicEventsPage";
 import { islamicEventCountdown, islamicEventTimeline } from "./src/islamicEvents";
 import SettingsHub from "./src/SettingsHub";
-import HomePrayerPanel from "./src/HomePrayerPanel";
+import HomePrayerPage from "./src/HomePrayerPage";
+import { subscribePrayerCalculationChanges } from "./src/prayerCalculationSettings";
+import { loadInitialPrayerTimes, loadPrayerTimes, type LoadedPrayerTimes, type PrayerLocation } from "./src/prayerData";
+import TabletWallPrayerDisplay from "./src/TabletWallPrayerDisplay";
+import WallRemoteController from "./src/WallRemoteController";
+import MasjidTvDisplay from "./src/MasjidTvDisplay";
 import QiblaDirectionScreen from "./src/QiblaDirectionScreen";
 import HassounWidget from "./modules/hassoun-widget";
 import QuranAudio, { type QuranAudioStatus } from "./modules/quran-audio";
-import { STORAGE_KEYS, WINDSOR_TIME_ZONE } from "./src/config";
+import { CITY_LABEL, STORAGE_KEYS, WINDSOR_TIME_ZONE } from "./src/config";
 import {
   DEFAULT_PHONE_PRAYER_ALERTS,
   anyPrayerAlertEnabled,
@@ -34,13 +43,14 @@ import {
 } from "./src/alertPreferences";
 import { badgeForWins, EMPTY_QUIZ_STATS, loadQuizStats, nextBadge, type QuizStats } from "./src/islamicQuiz";
 import { disablePrayerNotifications, scheduleIslamicEventReminders, schedulePrayerNotifications, scheduleTestReminder } from "./src/notifications";
-import { openExactAlarmSettings, scheduleAndroidTestAdhan } from "./src/prayerAudio";
-import { loadLocationPrayerContext } from "./src/localPrayerTimes";
+import { cancelAndroidPrayerAudio, openExactAlarmSettings, scheduleAndroidTestAdhan, stopAndroidPrayerAudioPlayback, canScheduleAndroidExactAlarms } from "./src/prayerAudio";
 import PrayerAlertPreferenceGrid from "./src/PrayerAlertPreferenceGrid";
 import { registerDeviceForServerPush } from "./src/push";
 import Quran from "./src/quran/Quran";
-import { addDateDays, dateKeyInZone, formatPrayerTime, localToDateInZone, partsInZone } from "./src/time";
-import { PRAYER_KEYS, type PrayerKey, type PrayerTimes } from "./src/types";
+import HassounSplashAnimation from "./src/HassounSplashAnimation";
+import { addDateDays, formatPrayerTime, windsorDateKey, windsorLocalToDate } from "./src/time";
+import { PRAYER_KEYS, type PrayerFile, type PrayerKey, type PrayerTimes } from "./src/types";
+import bundledSchedule from "./assets/windsor_islamic_association_2026_prayer_times.json";
 
 type AppTab = "home" | "quran" | "quiz" | "alerts" | "events" | "qibla" | "more";
 
@@ -64,14 +74,14 @@ const PRAYER_ICONS: Record<PrayerKey, string> = {
   isha: "🌙"
 };
 
-function nextPrayerFor(prayerTimes: PrayerTimes, now = new Date(), timeZone = WINDSOR_TIME_ZONE) {
-  const currentKey = dateKeyInZone(now, timeZone);
+function nextPrayerFor(prayerTimes: PrayerTimes, now = new Date()) {
+  const currentKey = windsorDateKey(now);
   for (let dayOffset = 0; dayOffset <= 7; dayOffset += 1) {
     const dateKey = addDateDays(currentKey, dayOffset);
     const day = prayerTimes[dateKey];
     if (!day) continue;
     for (const prayer of PRAYER_KEYS) {
-      const target = localToDateInZone(dateKey, day[prayer], timeZone);
+      const target = windsorLocalToDate(dateKey, day[prayer]);
       const deltaMs = target.getTime() - now.getTime();
       if (deltaMs <= 0) continue;
       const secondsRemaining = Math.max(1, Math.ceil(deltaMs / 1000));
@@ -88,90 +98,253 @@ function countdownLabel(seconds: number, locale: "en" | "ar") {
   return locale === "ar" ? `${hours ? `${hours} س ` : ""}${minutes} د` : `${hours ? `${hours}h ` : ""}${minutes}m`;
 }
 
-function hijriDateLabel(date: Date, locale: "en" | "ar", timeZone = WINDSOR_TIME_ZONE) {
+function hijriDateLabel(date: Date, locale: "en" | "ar") {
   try {
     return new Intl.DateTimeFormat(locale === "ar" ? "ar-u-ca-islamic-umalqura" : "en-u-ca-islamic-umalqura", {
-      day: "numeric", month: "long", year: "numeric", timeZone
+      day: "numeric", month: "long", year: "numeric", timeZone: WINDSOR_TIME_ZONE
     }).format(date);
   } catch { return ""; }
 }
 
 export default function App({ onOpenEmailAlerts }: AppProps) {
   const [now, setNow] = useState(new Date());
-  const [prayerTimes, setPrayerTimes] = useState<PrayerTimes>({});
+  const [prayerTimes, setPrayerTimes] = useState<PrayerTimes>(() => (bundledSchedule as PrayerFile).prayer_times);
   const [live, setLive] = useState(false);
+  const [prayerLocation, setPrayerLocation] = useState<PrayerLocation>({ latitude: 42.3149, longitude: -83.0364, timezone: WINDSOR_TIME_ZONE, label: CITY_LABEL, source: "saved" });
   const [locale, setLocale] = useState<"en" | "ar">("en");
   const [alertsEnabled, setAlertsEnabled] = useState(false);
   const [busy, setBusy] = useState(true);
   const [scheduledCount, setScheduledCount] = useState(0);
   const [activeTab, setActiveTab] = useState<AppTab>("home");
+  const [resumeStateReady, setResumeStateReady] = useState(false);
+  const activeTabRef = useRef<AppTab>("home");
+  const [runtimeNavRestored, setRuntimeNavRestored] = useState(false);
+  const [navStateRestored, setNavStateRestored] = useState(false);
   const [quranAppNavVisible, setQuranAppNavVisible] = useState(true);
   const [quranOwnsAudioSurface, setQuranOwnsAudioSurface] = useState(false);
   const [globalQuranAudio, setGlobalQuranAudio] = useState<QuranAudioStatus>({ available: Boolean(QuranAudio), state: "idle", positionMs: 0, durationMs: 0, speed: 1 });
   const [quizStats, setQuizStats] = useState<QuizStats>(EMPTY_QUIZ_STATS);
   const [phoneAlertPreferences, setPhoneAlertPreferences] = useState<PrayerAlertPreferences>(DEFAULT_PHONE_PRAYER_ALERTS);
   const [alertPreferencesBusy, setAlertPreferencesBusy] = useState(false);
-  const [locationLabel, setLocationLabel] = useState("Windsor, Ontario");
-  const [prayerTimeZone, setPrayerTimeZone] = useState(WINDSOR_TIME_ZONE);
-  const [sourceLabel, setSourceLabel] = useState("Saved official Windsor schedule");
-  // Detect DST, device timezone and local prayer-day changes while the app stays open.
-  const lastClockSignature = useRef<string | null>(null);
-  const clockRefreshRunning = useRef(false);
+  const [prayerContext, setPrayerContext] = useState<LoadedPrayerTimes | null>(null);
+  const [refreshingHome, setRefreshingHome] = useState(false);
+  const [startupAudioCleared, setStartupAudioCleared] = useState(false);
+  const [exactAlarmAllowed, setExactAlarmAllowed] = useState(() => canScheduleAndroidExactAlarms());
+  const [manualPullStartY, setManualPullStartY] = useState<number | null>(null);
+  const [manualPullDistance, setManualPullDistance] = useState(0);
+  const [homeScrollAtTop, setHomeScrollAtTop] = useState(true);
+  const [manualRefreshNonce, setManualRefreshNonce] = useState(0);
+  const [startupSplashVisible, setStartupSplashVisible] = useState(true);
+  const [wallLocationLabel, setWallLocationLabel] = useState(CITY_LABEL);
+  const [remoteControllerOpen, setRemoteControllerOpen] = useState(false);
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const isPortraitWallTablet = activeTab === "home" && viewportWidth >= 600 && viewportHeight > viewportWidth && !Platform.isTV;
+  const isMasjidTv = Boolean(Platform.isTV);
 
-
-  const todayKey = dateKeyInZone(now, prayerTimeZone);
+  const todayKey = windsorDateKey(now);
   const today = prayerTimes[todayKey];
-  const next = useMemo(() => nextPrayerFor(prayerTimes, now, prayerTimeZone), [now, prayerTimes, prayerTimeZone]);
+  const next = useMemo(() => nextPrayerFor(prayerTimes, now), [now, prayerTimes]);
   const badge = badgeForWins(quizStats.totalWins);
   const upcomingBadge = nextBadge(quizStats.totalWins);
   const islamicTimeline = useMemo(() => islamicEventTimeline(todayKey), [todayKey]);
   const upcomingIslamicEvent = islamicTimeline.next;
   const upcomingIslamicDays = islamicTimeline.daysUntilNext;
 
-  const refreshPrayerLocation = useCallback(async (force = false) => {
-    const context = await loadLocationPrayerContext(force);
-    setPrayerTimes(context.prayerTimes);
-    setLive(context.live);
-    setLocationLabel(context.locationLabel);
-    setPrayerTimeZone(context.timezone);
-    setSourceLabel(context.sourceLabel);
-    return context;
+
+  // Android system back: stay inside Hassoun. Child screens can consume the
+  // event first; otherwise any top-level app page returns to Home instead of
+  // closing the Android activity.
+
+
+
+  // HASSOUN_EXACT_SCREEN_RESUME_V3
+  useEffect(() => {
+    let alive = true;
+    void AsyncStorage.multiGet([
+      "hassoun:resume-exact-screen:v1",
+      "hassoun:last-active-tab:v2",
+      "hassoun:last-active-tab:v1"
+    ]).then((rows) => {
+      if (!alive) return;
+      const saved = rows[0]?.[1] || rows[1]?.[1] || rows[2]?.[1];
+      const allowed: AppTab[] = ["home", "quran", "quiz", "alerts", "events", "qibla", "more"];
+      if (saved && allowed.includes(saved as AppTab)) {
+        activeTabRef.current = saved as AppTab;
+        setActiveTab(saved as AppTab);
+      }
+    }).finally(() => {
+      if (alive) setResumeStateReady(true);
+    });
+    return () => { alive = false; };
   }, []);
+
+  // HASSOUN_CONTINUOUS_SCREEN_CHECKPOINT_V4
+  useEffect(() => {
+    if (!resumeStateReady) return;
+    activeTabRef.current = activeTab;
+    void AsyncStorage.multiSet([
+      ["hassoun:resume-exact-screen:v1", activeTab],
+      ["hassoun:last-active-tab:v2", activeTab],
+      ["hassoun:last-active-tab:v1", activeTab]
+    ]).catch(() => undefined);
+  }, [activeTab, resumeStateReady]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") return;
+      const current = activeTabRef.current;
+      void AsyncStorage.multiSet([
+        ["hassoun:resume-exact-screen:v1", current],
+        ["hassoun:last-active-tab:v2", current],
+        ["hassoun:last-active-tab:v1", current]
+      ]).catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void AsyncStorage.getItem("hassoun:last-active-tab:v2")
+      .then((saved) => {
+        if (!alive || !saved) return;
+        const allowed: AppTab[] = ["home", "quran", "quiz", "alerts", "events", "qibla", "more"];
+        if (allowed.includes(saved as AppTab)) setActiveTab(saved as AppTab);
+      })
+      .finally(() => { if (alive) setRuntimeNavRestored(true); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!runtimeNavRestored) return;
+    void AsyncStorage.setItem("hassoun:last-active-tab:v2", activeTab).catch(() => undefined);
+  }, [activeTab, runtimeNavRestored]);
+
+  const refreshHome = useCallback(async () => {
+    if (refreshingHome) return;
+    setRefreshingHome(true);
+    try {
+      const refreshed = await loadPrayerTimes({ forceLocation: true });
+      setPrayerContext(refreshed);
+      setPrayerTimes(refreshed.prayerTimes);
+      setPrayerLocation(refreshed.location);
+      setLive(refreshed.live);
+      setNow(new Date());
+      HassounWidget.syncPrayerSchedule(JSON.stringify(refreshed.prayerTimes), locale);
+      HassounWidget.refresh();
+      if (alertsEnabled) {
+        const result = await schedulePrayerNotifications(
+          refreshed.prayerTimes,
+          locale,
+          phoneAlertPreferences,
+          refreshed.location.label,
+          refreshed.location.timezone
+        );
+        setScheduledCount(result.count);
+      }
+      void registerDeviceForServerPush(locale).catch(() => undefined);
+    } catch (error) {
+      const message = String(error);
+      Alert.alert(
+        locale === "ar" ? "تعذر تحديث الموقع" : "Location refresh failed",
+        message.includes("LOCATION_PERMISSION_DENIED")
+          ? (locale === "ar" ? "اسمح لتطبيق Hassoun باستخدام الموقع ثم اسحب للأسفل مرة أخرى." : "Allow Hassoun to use your location, then pull down again.")
+          : message.includes("LOCATION_SERVICES_DISABLED")
+            ? (locale === "ar" ? "فعّل خدمة الموقع ثم اسحب للأسفل مرة أخرى." : "Turn on Location Services, then pull down again.")
+            : (locale === "ar" ? "لم نتمكن من الحصول على موقع GPS جديد. لم يتم تغيير مواقيت الصلاة الحالية." : "Hassoun could not get a fresh GPS fix. Your current prayer data was left unchanged.")
+      );
+    } finally {
+      setRefreshingHome(false);
+    }
+  }, [alertsEnabled, locale, phoneAlertPreferences, refreshingHome]);
+
+  useEffect(() => {
+    return subscribePrayerCalculationChanges(() => {
+      void refreshHome();
+    });
+  }, [refreshHome]);
+
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      await stopAndroidPrayerAudioPlayback().catch(() => undefined);
+      await cancelAndroidPrayerAudio().catch(() => undefined);
+      if (mounted) setStartupAudioCleared(true);
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (activeTab === "home") return false;
+      setActiveTab("home");
+      setQuranAppNavVisible(true);
+      setQuranOwnsAudioSurface(false);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [activeTab]);
 
   useEffect(() => {
     if (Object.keys(prayerTimes).length) HassounWidget.syncPrayerSchedule(JSON.stringify(prayerTimes), locale);
   }, [prayerTimes, locale]);
 
   useEffect(() => {
+    let alive = true;
+    void AsyncStorage.getItem("hassoun:last-active-tab:v1").then((saved) => {
+      if (!alive) return;
+      const allowed: AppTab[] = ["home", "quran", "quiz", "alerts", "events", "qibla", "more"];
+      if (saved && allowed.includes(saved as AppTab)) setActiveTab(saved as AppTab);
+    }).finally(() => { if (alive) setNavStateRestored(true); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!navStateRestored) return;
+    void AsyncStorage.setItem("hassoun:last-active-tab:v1", activeTab).catch(() => undefined);
+  }, [activeTab, navStateRestored]);
+
+  useEffect(() => {
+    if (!startupAudioCleared) return;
     const timer = setInterval(() => setNow(new Date()), 1_000);
     void (async () => {
-      const [savedLocale, savedAlerts, savedPhoneAlertPreferences, loaded, storedQuizStats] = await Promise.all([
+      const [savedLocale, savedAlerts, savedPhoneAlertPreferences, initial, storedQuizStats] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.locale),
         AsyncStorage.getItem(STORAGE_KEYS.alertsEnabled),
         loadPhonePrayerAlertPreferences(),
-        loadLocationPrayerContext(false),
+        loadInitialPrayerTimes(),
         loadQuizStats()
       ]);
       const chosenLocale = savedLocale === "ar" ? "ar" : "en";
       setLocale(chosenLocale);
       setAlertsEnabled(savedAlerts === "on");
-      setPrayerTimes(loaded.prayerTimes);
-      setLive(loaded.live);
-      setLocationLabel(loaded.locationLabel);
-      setPrayerTimeZone(loaded.timezone);
-      setSourceLabel(loaded.sourceLabel);
+      setPrayerTimes(initial.prayerTimes);
+      setLive(initial.live);
+      setPrayerLocation(initial.location);
+      setWallLocationLabel(initial.location?.label && initial.location.label !== "Current location" ? initial.location.label : CITY_LABEL);
       setQuizStats(storedQuizStats);
       setPhoneAlertPreferences(savedPhoneAlertPreferences);
       setBusy(false);
       if (savedAlerts === "on") {
-        const result = await schedulePrayerNotifications(loaded.prayerTimes, chosenLocale, savedPhoneAlertPreferences, loaded.locationLabel, loaded.timezone);
+        const result = await schedulePrayerNotifications(initial.prayerTimes, chosenLocale, savedPhoneAlertPreferences);
         setScheduledCount(result.count);
-        await scheduleIslamicEventReminders(dateKeyInZone(new Date(), loaded.timezone), chosenLocale).catch(() => undefined);
+        await scheduleIslamicEventReminders(windsorDateKey(new Date()), chosenLocale).catch(() => undefined);
         void registerDeviceForServerPush(chosenLocale).catch(() => undefined);
       }
+
+      // Refresh GPS + network prayer data only after Home is already usable.
+      // This keeps startup instant and updates Windsor/Montreal/other cities in the background.
+      void loadPrayerTimes().then(async (refreshed) => {
+        setPrayerTimes(refreshed.prayerTimes);
+        setPrayerLocation(refreshed.location);
+        setLive(refreshed.live);
+        if (savedAlerts === "on") {
+          const result = await schedulePrayerNotifications(refreshed.prayerTimes, chosenLocale, savedPhoneAlertPreferences);
+          setScheduledCount(result.count);
+        }
+      }).catch(() => undefined);
     })();
     return () => clearInterval(timer);
-  }, []);
+  }, [startupAudioCleared]);
 
   useEffect(() => {
     const sync = () => { if (QuranAudio) setGlobalQuranAudio(QuranAudio.getStatus()); };
@@ -180,69 +353,118 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
     return () => clearInterval(timer);
   }, []);
 
+  // HASSOUN_BACKGROUND_RESUME_NO_RESET_V4
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
+      // NORMAL RESUME: preserve the mounted React tree exactly as-is.
+      // Do not reload GPS/prayers, do not run startup, and do not change tabs/pages.
       setNow(new Date());
-      void loadQuizStats().then(setQuizStats).catch(() => undefined);
-      void refreshPrayerLocation(true).then((context) => {
-        if (!alertsEnabled) return;
-        return schedulePrayerNotifications(context.prayerTimes, locale, phoneAlertPreferences, context.locationLabel, context.timezone)
-          .then((result) => setScheduledCount(result.count));
-      }).catch(() => undefined);
-      void scheduleIslamicEventReminders(dateKeyInZone(new Date(), prayerTimeZone), locale).catch(() => undefined);
     });
     return () => subscription.remove();
-  }, [alertsEnabled, locale, phoneAlertPreferences, prayerTimeZone, refreshPrayerLocation]);
+  }, []);
+
 
   useEffect(() => {
-    // A wall-clock offset may change while the device remains in the foreground.
-    // Polling once a minute avoids unnecessary GPS/network work every second.
-    const checkClock = () => {
-      const instant = new Date();
-      const parts = partsInZone(instant, prayerTimeZone);
-      const zonedAsUTC = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-      const zoneOffsetMinutes = Math.round((zonedAsUTC - instant.getTime()) / 60000);
-      const signature = [
-        dateKeyInZone(instant, prayerTimeZone),
-        prayerTimeZone,
-        zoneOffsetMinutes,
-        Intl.DateTimeFormat().resolvedOptions().timeZone,
-        instant.getTimezoneOffset()
-      ].join("|");
-      if (lastClockSignature.current === null) {
-        lastClockSignature.current = signature;
-        return;
-      }
-      if (signature === lastClockSignature.current || clockRefreshRunning.current) return;
-      clockRefreshRunning.current = true;
-      void refreshPrayerLocation(true).then(async context => {
-        lastClockSignature.current = signature;
-        setNow(new Date());
-        if (alertsEnabled) {
-          const result = await schedulePrayerNotifications(
-            context.prayerTimes, locale, phoneAlertPreferences, context.locationLabel, context.timezone
-          );
-          setScheduledCount(result.count);
-          await scheduleIslamicEventReminders(
-            dateKeyInZone(new Date(), context.timezone), locale, context.timezone
-          ).catch(() => undefined);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setNow(new Date());
+    });
+    return () => subscription.remove();
+  }, []);
+
+  // HOME_PRAYER_AUTOLOAD_V1: show saved prayer data immediately, then refresh location once on cold start.
+  useEffect(() => {
+    let active = true;
+
+    void loadInitialPrayerTimes()
+      .then((loaded) => {
+        if (!active) return;
+        setPrayerContext(loaded);
+        setPrayerTimes(loaded.prayerTimes);
+        setPrayerLocation(loaded.location);
+        setLive(loaded.live);
+        setWallLocationLabel(loaded.location.label);
+      })
+      .catch(() => undefined);
+
+    void loadPrayerTimes()
+      .then((loaded) => {
+        if (!active) return;
+        setPrayerContext(loaded);
+        setPrayerTimes(loaded.prayerTimes);
+        setPrayerLocation(loaded.location);
+        setLive(loaded.live);
+        setWallLocationLabel(loaded.location.label);
+        HassounWidget.syncPrayerSchedule(JSON.stringify(loaded.prayerTimes), locale);
+        HassounWidget.refresh();
+      })
+      .catch(() => undefined);
+
+    return () => { active = false; };
+  }, []);
+
+
+  // HASSOUN_EXACT_ALARM_PERMISSION_V4
+  const exactAlarmPromptShownRef = useRef(false);
+
+  const refreshExactAlarmPermissionState = useCallback(() => {
+    setExactAlarmAllowed(canScheduleAndroidExactAlarms());
+  }, []);
+
+  const showExactAlarmPermissionPrompt = useCallback(() => {
+    if (exactAlarmPromptShownRef.current || canScheduleAndroidExactAlarms()) return;
+    exactAlarmPromptShownRef.current = true;
+    Alert.alert(
+      locale === "ar" ? "السماح بالمنبهات والتذكيرات" : "Allow Alarms & reminders",
+      locale === "ar"
+        ? "يحتاج حسّون إلى إذن المنبهات والتذكيرات من أندرويد لكي يبدأ الأذان والتنبيهات الدقيقة في وقتها حتى إذا كان التطبيق في الخلفية. اضغط السماح الآن ثم فعّل حسّون في شاشة أندرويد."
+        : "Hassoun needs Android Alarms & reminders access so exact prayer alerts and Adhan can start on time even while the app is in the background. Tap Allow now, then enable Hassoun on the Android screen.",
+      [
+        {
+          text: locale === "ar" ? "ليس الآن" : "Not now",
+          style: "cancel",
+          onPress: () => { exactAlarmPromptShownRef.current = false; }
+        },
+        {
+          text: locale === "ar" ? "السماح الآن" : "Allow now",
+          onPress: () => { openExactAlarmSettings(); }
         }
-      }).catch(() => {
-        // Retain the previous signature so the next poll can retry.
-      }).finally(() => { clockRefreshRunning.current = false; });
-    };
-    checkClock();
-    const timer = setInterval(checkClock, 60_000);
-    return () => clearInterval(timer);
-  }, [prayerTimeZone, refreshPrayerLocation, alertsEnabled, locale, phoneAlertPreferences]);
+      ]
+    );
+  }, [locale]);
+
+  useEffect(() => {
+    refreshExactAlarmPermissionState();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setTimeout(() => {
+          const allowed = canScheduleAndroidExactAlarms();
+          setExactAlarmAllowed(allowed);
+          if (!allowed) {
+            exactAlarmPromptShownRef.current = false;
+            setTimeout(showExactAlarmPermissionPrompt, 500);
+          }
+        }, 350);
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshExactAlarmPermissionState, showExactAlarmPermissionPrompt]);
+
+  // Fresh installs must always get a visible prompt if Android special access is
+  // missing. Do not depend on startupAudioCleared or persisted storage flags because
+  // those can suppress the permission request forever on affected devices.
+  useEffect(() => {
+    if (exactAlarmAllowed || AppState.currentState !== "active") return;
+    const timer = setTimeout(showExactAlarmPermissionPrompt, 900);
+    return () => clearTimeout(timer);
+  }, [exactAlarmAllowed, showExactAlarmPermissionPrompt]);
 
   const toggleLocale = async () => {
     const nextLocale = locale === "en" ? "ar" : "en";
     setLocale(nextLocale);
     await AsyncStorage.setItem(STORAGE_KEYS.locale, nextLocale);
     if (alertsEnabled) {
-      const result = await schedulePrayerNotifications(prayerTimes, nextLocale, phoneAlertPreferences, locationLabel, prayerTimeZone);
+      const result = await schedulePrayerNotifications(prayerTimes, nextLocale, phoneAlertPreferences);
       setScheduledCount(result.count);
       await scheduleIslamicEventReminders(todayKey, nextLocale).catch(() => undefined);
     }
@@ -263,7 +485,7 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
         setPhoneAlertPreferences(preferences);
         await savePhonePrayerAlertPreferences(preferences);
       }
-      const result = await schedulePrayerNotifications(prayerTimes, locale, preferences, locationLabel, prayerTimeZone);
+      const result = await schedulePrayerNotifications(prayerTimes, locale, preferences);
       if (!result.granted) {
         Alert.alert("Notifications are off", "Allow notifications in your phone settings to receive prayer alerts.");
         return;
@@ -293,7 +515,7 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
         setScheduledCount(0);
         return;
       }
-      const result = await schedulePrayerNotifications(prayerTimes, locale, nextPreferences, locationLabel, prayerTimeZone);
+      const result = await schedulePrayerNotifications(prayerTimes, locale, nextPreferences);
       setScheduledCount(result.count);
     } finally {
       setAlertPreferencesBusy(false);
@@ -330,60 +552,88 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
     } catch (error) { Alert.alert("Adhan test failed", String(error)); }
   };
 
-  if (busy && !today) {
-    return <SafeAreaView style={styles.loading} edges={["top", "bottom", "left", "right"]}><ActivityIndicator color="#0b5b47" size="large" /><Text style={styles.loadingText}>Loading local prayer times…</Text></SafeAreaView>;
+  if (startupSplashVisible) {
+    return <HassounSplashAnimation onFinished={() => setStartupSplashVisible(false)} />;
   }
 
-  const date = localToDateInZone(todayKey, "12:00", prayerTimeZone);
+  const date = windsorLocalToDate(todayKey, "12:00");
   const shortDate = new Intl.DateTimeFormat(locale === "ar" ? "ar-CA" : "en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric" }).format(date);
-  const hijriDate = hijriDateLabel(date, locale, prayerTimeZone);
+  const hijriDate = hijriDateLabel(date, locale);
 
   const header = (
     <View style={styles.header}>
       <Pressable onPress={() => setActiveTab("more")} style={styles.menuButton}><Text style={styles.menuIcon}>☰</Text></Pressable>
       <Image source={require("./assets/hassoun-logo.png")} style={styles.headerLogo} />
-      <View style={styles.brandText}><Text style={styles.title}>Hassoun</Text><Text numberOfLines={1} style={styles.subtitle}>📍 {locationLabel} • {locale === "ar" ? "مواقيت الصلاة" : "Prayer Times"}</Text></View>
+      <View style={styles.brandText}><Text style={styles.title}>Hassoun</Text><Text style={styles.subtitle}>📍 {prayerLocation.label} • {locale === "ar" ? "مواقيت الصلاة" : "Prayer Times"}</Text></View>
       <Pressable onPress={toggleLocale} style={styles.languageButton}><Text style={styles.languageText}>{locale === "en" ? "AR" : "EN"}</Text></Pressable>
     </View>
   );
+  // HASSOUN_RESUME_RENDER_GATE_V3
+  if (!resumeStateReady) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#f7f8f4" }}>
+        <ActivityIndicator color="#0b5b47" size="large" />
+      </View>
+    );
+  }
 
   const homeScreen = (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      {header}
-      <View style={styles.dateHero}><View style={styles.dateCopy}><Text style={styles.datePrimary}>{shortDate}</Text>{hijriDate ? <Text style={styles.dateHijri}>🌙 {hijriDate}</Text> : null}<View style={styles.syncRow}><View style={[styles.syncDot, !live && styles.syncDotSaved]} /><Text style={styles.syncText}>{sourceLabel}</Text></View></View><View style={styles.heroLogoShell}><Image source={require("./assets/hassoun-logo.png")} resizeMode="contain" style={styles.heroLogo} /></View></View>
+    <HomePrayerPage
+      locale={locale}
+      context={prayerContext}
+      refreshing={refreshingHome}
+      alertsEnabled={alertsEnabled}
+      alertPreferencesBusy={alertPreferencesBusy}
+      preferences={phoneAlertPreferences}
+      scheduledCount={scheduledCount}
+      onRefresh={refreshHome}
+      onMenu={() => setActiveTab("more")}
+      onToggleLocale={() => { void toggleLocale(); }}
+      onOpenQibla={() => setActiveTab("qibla")}
+      onOpenAlerts={() => setActiveTab("alerts")}
+      onToggleAlerts={(enabled) => { void toggleAlerts(enabled); }}
+      onChangePreferences={(nextPreferences) => { void updatePhoneAlertPreferences(nextPreferences); }}
+      onTogglePrayerAudio={(prayer) => { void togglePrayerAudio(prayer); }}
+    />
+  );
 
-      {upcomingIslamicEvent && upcomingIslamicDays !== null && upcomingIslamicDays <= 15 ? (
-        <Pressable onPress={() => setActiveTab("events")} style={styles.eventCountdownCard}>
-          <View style={styles.eventCountdownIcon}><Text style={styles.eventCountdownEmoji}>{upcomingIslamicEvent.emoji}</Text></View>
-          <View style={styles.eventCountdownCopy}><Text style={styles.eventCountdownEyebrow}>{locale === "ar" ? "المناسبة الإسلامية القادمة" : "UPCOMING ISLAMIC EVENT"}</Text><Text style={styles.eventCountdownTitle}>{upcomingIslamicEvent.name[locale]}</Text><Text style={styles.eventCountdownText}>{locale === "ar" ? `متبقي ${islamicEventCountdown(upcomingIslamicDays, locale)}` : `${islamicEventCountdown(upcomingIslamicDays, locale)} remaining`} • {upcomingIslamicEvent.description[locale]}</Text></View>
-          <Text style={styles.eventCountdownArrow}>›</Text>
-        </Pressable>
-      ) : null}
 
-      <HomePrayerPanel
-        locale={locale}
-        today={today}
-        todayKey={todayKey}
-        prayerTimes={prayerTimes}
-        next={next}
-        preferences={phoneAlertPreferences}
-        onTogglePrayer={(prayer) => void togglePrayerAudio(prayer)}
-        onOpenQibla={() => setActiveTab("qibla")}
-      />
-
-      <Pressable onPress={() => setActiveTab("quiz")} style={styles.quizCard}><View style={styles.quizTopRow}><View style={styles.quizIconWrap}><Text style={styles.quizIcon}>🧠</Text></View><View style={styles.quizCopy}><Text style={styles.quizEyebrow}>{locale === "ar" ? "تعلّم كل يوم" : "LEARN EVERY DAY"}</Text><Text style={styles.quizTitle}>{locale === "ar" ? "المسابقة والألعاب الجماعية" : "Quiz & Multiplayer Games"}</Text><Text style={styles.quizDescription}>{locale === "ar" ? "مسابقة يومية + Trivia وImposter وألعاب إسلامية ورياضية جماعية." : "Daily quiz + live Trivia, Imposter and Islamic/sports multiplayer games."}</Text></View><Text style={styles.quizArrow}>›</Text></View><View style={styles.quizStats}><View style={styles.quizStat}><Text style={styles.quizStatEmoji}>{badge.emoji}</Text><Text style={styles.quizStatValue}>{badge.name[locale]}</Text><Text style={styles.quizStatLabel}>{locale === "ar" ? "الشارة" : "Badge"}</Text></View><View style={styles.quizStat}><Text style={styles.quizStatEmoji}>🔥</Text><Text style={styles.quizStatValue}>{quizStats.streak}</Text><Text style={styles.quizStatLabel}>{locale === "ar" ? "سلسلة" : "Streak"}</Text></View><View style={styles.quizStat}><Text style={styles.quizStatEmoji}>🏆</Text><Text style={styles.quizStatValue}>{quizStats.totalWins}</Text><Text style={styles.quizStatLabel}>{locale === "ar" ? "انتصارات" : "Wins"}</Text></View></View>{upcomingBadge ? <Text style={styles.quizNextBadge}>{upcomingBadge.emoji} {locale === "ar" ? "الشارة القادمة" : "Next badge"}: {upcomingBadge.name[locale]} • {Math.max(0, upcomingBadge.minWins - quizStats.totalWins)} {locale === "ar" ? "انتصارات" : "wins"}</Text> : null}</Pressable>
-
-      <View style={styles.smartGrid}><Pressable onPress={() => setActiveTab("quran")} style={styles.smartCard}><Text style={styles.smartEmoji}>📖</Text><Text style={styles.smartTitle}>{locale === "ar" ? "القرآن" : "Qur’an"}</Text><Text style={styles.smartText}>{locale === "ar" ? "قارئ أندرويد أصلي" : "Native Android reader"}</Text></Pressable><Pressable onPress={() => setActiveTab("alerts")} style={styles.smartCard}><Text style={styles.smartEmoji}>🔔</Text><Text style={styles.smartTitle}>{locale === "ar" ? "التنبيهات" : "Alerts"}</Text><Text style={styles.smartText}>{alertsEnabled ? (locale === "ar" ? "مفعّلة" : "Enabled") : (locale === "ar" ? "اضبط التذكيرات" : "Set reminders")}</Text></Pressable></View>
-
-      <Pressable onPress={() => setActiveTab("events")} style={styles.eventsEntryCard}><View style={styles.eventsEntryIcon}><Text style={styles.eventsEntryEmoji}>🌙</Text></View><View style={styles.eventsEntryCopy}><Text style={styles.eventsEntryEyebrow}>{locale === "ar" ? "التقويم الإسلامي" : "ISLAMIC CALENDAR"}</Text><Text style={styles.eventsEntryTitle}>{locale === "ar" ? "المناسبات الإسلامية" : "Islamic Events"}</Text><Text style={styles.eventsEntryText}>{upcomingIslamicEvent ? `${locale === "ar" ? "القادمة" : "Next"}: ${upcomingIslamicEvent.name[locale]} • ${islamicEventCountdown(upcomingIslamicDays ?? 0, locale)}` : (locale === "ar" ? "شاهد مناسبات السنة" : "View the full year")}</Text></View><Text style={styles.eventsEntryArrow}>›</Text></Pressable>
-
-      <View style={styles.inspirationCard}><View style={styles.inspirationIcon}><Text style={styles.inspirationEmoji}>🏮</Text></View><View style={styles.inspirationCopy}><Text style={styles.inspirationEyebrow}>{locale === "ar" ? "إلهام اليوم" : "DAILY INSPIRATION"}</Text><Text style={styles.inspirationText}>{locale === "ar" ? "بذكر الله تطمئن القلوب." : "Hearts find comfort in the remembrance of Allah."}</Text><Text style={styles.inspirationRef}>Qur’an 13:28</Text></View></View>
-      <Text style={styles.footer}>Official Windsor Islamic Association schedule • America/Toronto</Text>
-    </ScrollView>
+  const masjidTvScreen = (
+    <MasjidTvDisplay
+      locale={locale}
+      now={now}
+      dateKey={todayKey}
+      shortDate={shortDate}
+      hijriDate={hijriDate}
+      locationLabel={wallLocationLabel}
+      today={today}
+      next={next}
+      onTestNotification={() => void testNotification()}
+      onTestAdhan={() => void testAdhan()}
+      onEnableAlerts={() => void toggleAlerts(true)}
+      onRefreshPrayers={() => void loadPrayerTimes().then((loaded) => {
+        setPrayerTimes(loaded.prayerTimes);
+        setLive(loaded.live);
+      setPrayerContext(loaded);
+        setWallLocationLabel(loaded.location?.label && loaded.location.label !== "Current location" ? loaded.location.label : CITY_LABEL);
+      }).catch(() => undefined)}
+    />
   );
 
   const alertsScreen = (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}
+      onScroll={(event) => setHomeScrollAtTop(event.nativeEvent.contentOffset.y <= 1)}
+      alwaysBounceVertical
+      overScrollMode="always"
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshingHome}
+          onRefresh={refreshHome}
+          progressViewOffset={96}
+          enabled
+        />
+      }
+    >
       {header}
       <Text style={styles.pageEyebrow}>HASSOUN • {locale === "ar" ? "مركز التنبيهات" : "ALERT CENTER"}</Text>
       <Text style={styles.pageTitle}>{locale === "ar" ? "تنبيهاتك، باختيارك" : "Your prayer alerts, your way"}</Text>
@@ -430,9 +680,9 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
     </ScrollView>
   );
 
-  const moreScreen = <SettingsHub locale={locale} onToggleLocale={toggleLocale} onOpenAlerts={() => setActiveTab("alerts")} onOpenEmailAlerts={onOpenEmailAlerts} />;
+  const moreScreen = <SettingsHub locale={locale} onToggleLocale={toggleLocale} onOpenAlerts={() => setActiveTab("alerts")} onOpenWallDisplays={() => setRemoteControllerOpen(true)} onOpenEmailAlerts={onOpenEmailAlerts} />;
 
-  const body = activeTab === "quran"
+  const body = isMasjidTv ? masjidTvScreen : activeTab === "quran"
     ? <Quran locale={locale} onBackHome={() => { setQuranAppNavVisible(true); setQuranOwnsAudioSurface(false); setActiveTab("home"); }} onAppNavVisibilityChange={setQuranAppNavVisible} onLocalAudioSurfaceChange={setQuranOwnsAudioSurface} />
     : activeTab === "quiz"
       ? <QuizGamesHub locale={locale} dateKey={todayKey} stats={quizStats} onStatsChange={setQuizStats} onBackHome={() => setActiveTab("home")} />
@@ -456,9 +706,9 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom", "left", "right"]}>
-      <StatusBar style="dark" /><View style={styles.flex}>{body}</View>
-      {(activeTab !== "quran" || !quranOwnsAudioSurface) && globalQuranAudio.state !== "idle" && globalQuranAudio.state !== "error" ? <View style={styles.globalAudioBar}><View style={styles.globalAudioCopy}><Text style={styles.globalAudioEyebrow}>{locale === "ar" ? "تشغيل القرآن" : "QUR’AN AUDIO"}</Text><Text numberOfLines={1} style={styles.globalAudioTitle}>{globalQuranAudio.title || (locale === "ar" ? "القرآن الكريم" : "Qur’an playback")}</Text>{globalQuranAudio.subtitle ? <Text numberOfLines={1} style={styles.globalAudioMeta}>{globalQuranAudio.subtitle}</Text> : null}</View><Pressable onPress={() => QuranAudio?.previous()} style={styles.globalAudioButton}><Text style={styles.globalAudioButtonText}>‹</Text></Pressable><Pressable onPress={() => globalQuranAudio.state === "playing" ? QuranAudio?.pause() : QuranAudio?.resume()} style={styles.globalAudioMain}><Text style={styles.globalAudioMainText}>{globalQuranAudio.state === "playing" ? "Ⅱ" : "▶"}</Text></Pressable><Pressable onPress={() => QuranAudio?.next()} style={styles.globalAudioButton}><Text style={styles.globalAudioButtonText}>›</Text></Pressable><Pressable onPress={() => QuranAudio?.stop()} style={styles.globalAudioStop}><Text style={styles.globalAudioStopText}>■</Text></Pressable></View> : null}
-      {activeTab !== "qibla" && (activeTab !== "quran" || quranAppNavVisible) ? <View style={styles.bottomNav}>{navItems.map((item) => { const active = activeTab === item.tab; return <Pressable key={item.tab} onPress={() => setActiveTab(item.tab)} style={[styles.navItem, active && styles.navItemActive]}><Text style={[styles.navEmoji, active && styles.navEmojiActive]}>{item.emoji}</Text><Text style={[styles.navLabel, active && styles.navLabelActive]}>{locale === "ar" ? item.ar : item.en}</Text></Pressable>; })}</View> : null}
+      <StatusBar hidden={isPortraitWallTablet || isMasjidTv} style="dark" /><View style={styles.flex}>{body}</View>{!isMasjidTv ? <WallRemoteController visible={remoteControllerOpen} onClose={() => setRemoteControllerOpen(false)} /> : null}
+      {!isPortraitWallTablet && !isMasjidTv && (activeTab !== "quran" || !quranOwnsAudioSurface) && globalQuranAudio.state !== "idle" && globalQuranAudio.state !== "error" ? <View style={styles.globalAudioBar}><View style={styles.globalAudioCopy}><Text style={styles.globalAudioEyebrow}>{locale === "ar" ? "تشغيل القرآن" : "QUR’AN AUDIO"}</Text><Text numberOfLines={1} style={styles.globalAudioTitle}>{globalQuranAudio.title || (locale === "ar" ? "القرآن الكريم" : "Qur’an playback")}</Text>{globalQuranAudio.subtitle ? <Text numberOfLines={1} style={styles.globalAudioMeta}>{globalQuranAudio.subtitle}</Text> : null}</View><Pressable onPress={() => QuranAudio?.previous()} style={styles.globalAudioButton}><Text style={styles.globalAudioButtonText}>‹</Text></Pressable><Pressable onPress={() => globalQuranAudio.state === "playing" ? QuranAudio?.pause() : QuranAudio?.resume()} style={styles.globalAudioMain}><Text style={styles.globalAudioMainText}>{globalQuranAudio.state === "playing" ? "Ⅱ" : "▶"}</Text></Pressable><Pressable onPress={() => QuranAudio?.next()} style={styles.globalAudioButton}><Text style={styles.globalAudioButtonText}>›</Text></Pressable><Pressable onPress={() => QuranAudio?.stop()} style={styles.globalAudioStop}><Text style={styles.globalAudioStopText}>■</Text></Pressable></View> : null}
+      {!isPortraitWallTablet && !isMasjidTv && activeTab !== "qibla" && (activeTab !== "quran" || quranAppNavVisible) ? <View style={styles.bottomNav}>{navItems.map((item) => { const active = activeTab === item.tab; return <Pressable key={item.tab} onPress={() => setActiveTab(item.tab)} style={[styles.navItem, active && styles.navItemActive]}><Text style={[styles.navEmoji, active && styles.navEmojiActive]}>{item.emoji}</Text><Text style={[styles.navLabel, active && styles.navLabelActive]}>{locale === "ar" ? item.ar : item.en}</Text></Pressable>; })}</View> : null}
     </SafeAreaView>
   );
 }

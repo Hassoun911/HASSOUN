@@ -17,7 +17,7 @@ import type { QuranAyah, QuranLocale } from "./quranData";
 export type QuranFontChoice = "qcf-v2" | "qcf-v1" | "qpc-hafs";
 export type QuranPageTheme = "paper" | "white" | "sepia" | "dark";
 export type QuranBookMode = "auto" | "single" | "spread";
-export type QuranBrowseMode = "vertical" | "horizontal";
+export type QuranBrowseMode = "horizontal";
 
 export type QuranAppearance = {
   font: QuranFontChoice;
@@ -37,7 +37,7 @@ export const DEFAULT_QURAN_APPEARANCE: QuranAppearance = {
   textColor: "#111111",
   pageTheme: "paper",
   bookMode: "auto",
-  browseMode: "vertical",
+  browseMode: "horizontal",
   tajweed: false
 };
 
@@ -64,8 +64,10 @@ export function useQuranAppearance() {
       try {
         const saved = await AsyncStorage.getItem(APPEARANCE_KEY);
         if (saved) {
-          const parsed = JSON.parse(saved) as Partial<QuranAppearance>;
-          setAppearanceState({ ...DEFAULT_QURAN_APPEARANCE, ...parsed, browseMode: "vertical" });
+          const parsed = JSON.parse(saved) as Partial<QuranAppearance> & { browseMode?: string };
+          // v1.0.18+: Mushaf paging is Arabic-book horizontal only.
+          // Migrate any older saved vertical preference permanently.
+          setAppearanceState({ ...DEFAULT_QURAN_APPEARANCE, ...parsed, browseMode: "horizontal" });
         }
       } catch {}
       setReady(true);
@@ -74,7 +76,8 @@ export function useQuranAppearance() {
 
   const setAppearance = (next: QuranAppearance | ((previous: QuranAppearance) => QuranAppearance)) => {
     setAppearanceState((previous) => {
-      const value = typeof next === "function" ? next(previous) : next;
+      const requested = typeof next === "function" ? next(previous) : next;
+      const value = { ...requested, browseMode: "horizontal" as const };
       void AsyncStorage.setItem(APPEARANCE_KEY, JSON.stringify(value));
       return value;
     });
@@ -357,7 +360,7 @@ export function ReaderSettingsSheet({
           <View style={styles.sheetHeader}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.sheetTitle, ar && styles.rtl]}>{t("Qur’an appearance", "مظهر القرآن")}</Text>
-              <Text style={[styles.sheetSubtitle, ar && styles.rtl]}>{t("Font • Tajweed • navigation • layout • size • colors", "الخط • التجويد • التنقل • شكل الكتاب • الحجم • الألوان")}</Text>
+              <Text style={[styles.sheetSubtitle, ar && styles.rtl]}>{t("Font • Tajweed • layout • size • colors", "الخط • التجويد • شكل الكتاب • الحجم • الألوان")}</Text>
             </View>
             <Pressable onPress={onDone} style={styles.doneTop}><Text style={styles.doneTopText}>✓</Text></Pressable>
           </View>
@@ -436,16 +439,14 @@ export function ReaderSettingsSheet({
 
             <Text style={[styles.sectionLabel, ar && styles.rtl]}>{t("PAGE BROWSING", "طريقة التنقل")}</Text>
             <View style={styles.browseRow}>
-              {([
-                ["vertical", "↕", t("Vertical", "رأسي"), t("Scroll up/down. At the page edge, keep swiping to turn the page.", "مرّر لأعلى وأسفل، وعند نهاية الصفحة تابع السحب للانتقال.")],
-                ["horizontal", "↔", t("Horizontal", "أفقي"), t("Swipe left/right anywhere on the Mushaf page to turn pages.", "اسحب يميناً ويساراً في أي مكان على صفحة المصحف للتنقل بين الصفحات.")]
-              ] as Array<[QuranBrowseMode, string, string, string]>).map(([mode, icon, label, note]) => (
-                <Pressable key={mode} onPress={() => setAppearance((previous) => ({ ...previous, browseMode: mode }))} style={[styles.browseChoice, appearance.browseMode === mode && styles.browseChoiceActive]}>
-                  <Text style={[styles.browseIcon, appearance.browseMode === mode && styles.browseIconActive]}>{icon}</Text>
-                  <View style={{ flex: 1 }}><Text style={[styles.browseLabel, ar && styles.rtl]}>{label}</Text><Text style={[styles.browseNote, ar && styles.rtl]}>{note}</Text></View>
-                  <View style={[styles.radio, appearance.browseMode === mode && styles.radioSelected]}>{appearance.browseMode === mode ? <View style={styles.radioDot} /> : null}</View>
-                </Pressable>
-              ))}
+              <View style={[styles.browseChoice, styles.browseChoiceActive]}>
+                <Text style={[styles.browseIcon, styles.browseIconActive]}>↔</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.browseLabel, ar && styles.rtl]}>{t("Arabic book paging", "تصفّح الكتاب العربي")}</Text>
+                  <Text style={[styles.browseNote, ar && styles.rtl]}>{t("Swipe left for the next page and right for the previous page. Up/down is reading scroll only.", "اسحب لليسار للصفحة التالية ولليمين للصفحة السابقة. التمرير لأعلى وأسفل للقراءة فقط.")}</Text>
+                </View>
+                <View style={[styles.radio, styles.radioSelected]}><View style={styles.radioDot} /></View>
+              </View>
             </View>
 
             <Text style={[styles.sectionLabel, ar && styles.rtl]}>{t("PAGE STYLE", "لون الصفحة")}</Text>

@@ -1,8 +1,5 @@
 {
-  "platforms": ["android", "ios"],
-  "ios": {
-    "modules": ["QuranAudioModule"]
-  },
+  "platforms": ["android"],
   "android": {
     "modules": ["ca.wopt.quranaudio.QuranAudioModule"]
   }
