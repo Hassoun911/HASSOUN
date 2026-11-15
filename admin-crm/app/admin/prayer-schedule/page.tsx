@@ -78,6 +78,8 @@ export default function PrayerScheduleAdminPage() {
     return () => clearInterval(timer);
   }, []);
 
+  const dates = useMemo(() => Object.keys(rows).sort(), [rows]);
+  const rowCount = dates.length;
   const selectedInfo = useMemo(() => status?.yearOverview?.find((x) => x.month === month) || null, [status, month]);
   const needsPublish = selectedInfo?.status === "pulled" || dirty;
   const canApproveExisting = Boolean(selectedInfo?.onFile) && selectedInfo?.status === "not-approved" && !dirty;
