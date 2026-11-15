@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/build-v1045-approved-store-candidate.yml'
+      - '.github/scripts/patch-v1045-current-windsor-calendar.py'
+      - '.github/scripts/build-v1045-from-approved-v1044.sh'
   workflow_dispatch:
 
 permissions:
