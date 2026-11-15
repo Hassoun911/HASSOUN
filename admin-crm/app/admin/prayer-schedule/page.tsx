@@ -47,9 +47,9 @@ function statusStyle(item?: MonthInfo | null): React.CSSProperties {
 
 export default function PrayerScheduleAdminPage() {
   const [month, setMonth] = useState(monthKeyNow());
-  // Only the trusted Windsor Worker determines which month is CURRENT.
-  // An empty marker is preferable to an incorrect marker based on a device clock.
+  // Only the uncached Admin server calendar decides which month is CURRENT.
   const [currentMonth, setCurrentMonth] = useState("");
+  const [windsorDate, setWindsorDate] = useState("");
   const [sourceUrl, setSourceUrl] = useState("https://timing.athanplus.com/masjid/widgets/monthly?masjid_id=adJEGWAk&theme=1");
   const [rows, setRows] = useState<PrayerTimes>({});
   const [status, setStatus] = useState<Status | null>(null);
@@ -65,21 +65,27 @@ export default function PrayerScheduleAdminPage() {
   async function load(target = month) {
     if (!token) { location.replace("/admin/"); return; }
     setBusy("load"); setMessage("");
-    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); if (data.currentMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
+    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to load schedule"); }
     finally { setBusy(""); }
   }
   useEffect(() => { void load(month); }, [month]);
-  // Refresh only the calendar marker on long-lived admin sessions. Do not
-  // overwrite edited prayer-time rows, selected month or approval state.
+  // Use only the Admin server's live Windsor date. Never use a selected
+  // schedule month, Worker cache or device-clock guess for the CURRENT badge.
   useEffect(() => {
     const check = async () => {
       try {
-        const data = await call("/admin/prayer-schedule?month=" + encodeURIComponent(monthKeyNow())) as Status;
-        if (data.currentMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth);
-      } catch { /* Keep the last server-confirmed month when offline. */ }
+        const response = await fetch("/api/windsor-date", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as { currentMonth?: string; windsorDate?: string };
+        if (data.currentMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(data.currentMonth)) {
+          setCurrentMonth(data.currentMonth);
+          setWindsorDate(data.windsorDate || "");
+        }
+      } catch { /* Retain last verified date if the connection drops. */ }
     };
-    const timer = setInterval(() => { void check(); }, 15 * 60_000);
+    void check();
+    const timer = setInterval(() => { void check(); }, 60_000);
     return () => clearInterval(timer);
   }, []);
 
@@ -174,7 +180,7 @@ export default function PrayerScheduleAdminPage() {
       </header>
 
       <section style={s.yearCard}>
-        <div style={s.yearHead}><div><div style={s.cardTitle}>{month.slice(0,4)} month status</div><div style={s.help}>See what is already stored, what has been pulled for review, and what has been approved.</div></div><div style={s.legend}><span style={{...s.legendItem,...statusStyle({onFile:true,status:"approved"} as MonthInfo)}}>✓ Approved</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"pulled"} as MonthInfo)}}>Pulled — review</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"not-approved"} as MonthInfo)}}>On file — not approved</span><span style={{...s.legendItem,...statusStyle(null)}}>Missing</span></div></div>
+        <div style={s.yearHead}><div><div style={s.cardTitle}>{month.slice(0,4)} month status</div><div style={s.help}>See what is already stored, what has been pulled for review, and what has been approved. {windsorDate ? `Current Windsor date: ${windsorDate}` : "Checking current Windsor date…"}</div></div><div style={s.legend}><span style={{...s.legendItem,...statusStyle({onFile:true,status:"approved"} as MonthInfo)}}>✓ Approved</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"pulled"} as MonthInfo)}}>Pulled — review</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"not-approved"} as MonthInfo)}}>On file — not approved</span><span style={{...s.legendItem,...statusStyle(null)}}>Missing</span></div></div>
         <div style={s.monthGrid}>{[...(status?.yearOverview || [])].sort((a,b)=>(a.month===currentMonth?0:1)-(b.month===currentMonth?0:1)||a.month.localeCompare(b.month)).map((item) => {
           const isCurrent = item.month === currentMonth;
           const isSelected = item.month === month;
