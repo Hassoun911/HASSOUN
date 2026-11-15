@@ -1,0 +1,104 @@
+name: Sync Approved Android v1.0.45 Source to Main
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-approved-android-v1045-to-main.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hassoun-android-source-main-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout main with full history and protected baseline
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify Android production backup exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin backup/android-main-before-v1045-source-sync
+          git rev-parse --verify refs/remotes/origin/backup/android-main-before-v1045-source-sync
+          echo "Old main is backed up before Android source replacement"
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Reconstruct exact passed v1.0.45 Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/fix-v1044-build-source.py
+          bash .github/scripts/build-v1045-from-approved-v1044.sh
+      - name: Verify clean canonical source before committing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("mobile")
+          config=(p/"app.config.ts").read_text()
+          home=(p/"src/HomePrayerPage.tsx").read_text()
+          mosque=(p/"src/NearbyMosquesPage.tsx").read_text()
+          prayer=(p/"src/prayerData.ts").read_text()
+          assert 'version: "1.0.45"' in config and "versionCode: 89" in config
+          assert "HASSOUN_RELEASE_WEEK_MONTH_V1045" in home
+          assert "HASSOUN_NEAREST_MOSQUE_AUTO_V1045" in mosque
+          assert "HASSOUN/main/windsor_islamic_association_2026_prayer_times.json" in prayer
+          assert "async function fetchOfficialWindsorSchedule(" in prayer
+          assert "HASSOUN_NEAREST_MOSQUE_CAR_ANIMATION_V1" in home
+          assert (p/"modules/prayer-audio/android/src/main").is_dir()
+          for name in ["icon.png","adaptive-icon.png","splash-logo.png","hassoun-logo.png"]:
+            assert (p/"assets"/name).stat().st_size > 1000, name
+          print("APPROVED_ANDROID_V1045_CANONICAL_SOURCE_VALIDATED")
+          PY
+      - name: Stage ONLY reconstructed Android mobile source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A -- mobile
+          git diff --cached --check
+          git diff --cached --name-status > /tmp/hassoun-android-source-diff.txt
+          echo "Changed Android source files:"
+          cat /tmp/hassoun-android-source-diff.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          lines=Path("/tmp/hassoun-android-source-diff.txt").read_text().splitlines()
+          if not lines: raise SystemExit("No Android source changes staged; main already matches the release")
+          paths=[x.split("\t")[-1] for x in lines]
+          for p in paths:
+            if not p.startswith("mobile/"):
+              raise SystemExit("Unsafe non-Android changes staged: "+p)
+            if any(t in p.lower() for t in [".keystore", ".jks", "google-services.json", "/.env", "/build/outputs/", "/node_modules/"]):
+              raise SystemExit("Potential private/generated Android artifact staged: "+p)
+          print(f"ANDROID_SOURCE_FILES_STAGED={len(paths)}")
+          PY
+      - name: Commit exact v1.0.45 reconstructed source on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Make Android main source canonical v1.0.45 from approved Play v1.0.44" -m "Replaces older mobile baseline with verified approved icon, native Azan, live Windsor JSON, weekly/monthly home view and GPS nearest-mosque fallback. Original main backed up at backup/android-main-before-v1045-source-sync."
+          git push origin HEAD:main
+          echo "ANDROID_MAIN_CANONICAL_V1045_SYNC_COMPLETE"
