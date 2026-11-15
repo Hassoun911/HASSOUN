@@ -30,6 +30,9 @@ jobs:
       - name: Install app dependencies
         working-directory: ios
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install iOS widget TypeScript dependencies without enabling unsigned extensions
+        working-directory: ios
+        run: npm install --no-save --no-audit --no-fund @expo/ui expo-widgets
       - name: Prepare iOS notification sound clips from approved Android recordings
         shell: bash
         run: |
@@ -101,6 +104,9 @@ jobs:
       - name: Install exact dependencies
         working-directory: ios
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install iOS widget TypeScript dependencies for native compilation
+        working-directory: ios
+        run: npm install --no-save --no-audit --no-fund @expo/ui expo-widgets
       - name: Generate native iOS Xcode project on GitHub
         working-directory: ios
         env:
