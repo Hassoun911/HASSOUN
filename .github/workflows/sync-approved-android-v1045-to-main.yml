@@ -113,10 +113,22 @@ jobs:
             path.write_text(fixed,encoding="utf-8")
             print("Normalized source whitespace:",path)
           PY
-          git add -A -- mobile
+          # Reconstructed source includes temporary npm/Gradle output. Never
+          # stage generated dependencies, caches, native build output, or local
+          # Firebase configuration in the canonical main branch.
+          git add -A -- mobile \
+            ':(exclude,glob)mobile/**/node_modules/**' \
+            ':(exclude,glob)mobile/**/build/**' \
+            ':(exclude,glob)mobile/**/.cxx/**' \
+            ':(exclude,glob)mobile/**/.gradle/**' \
+            ':(exclude,glob)mobile/**/.expo/**' \
+            ':(exclude,glob)mobile/**/.env*' \
+            ':(exclude,glob)mobile/**/google-services.json' \
+            ':(exclude,glob)mobile/**/*.keystore' \
+            ':(exclude,glob)mobile/**/*.jks'
           # The local Firebase configuration was present in the historical
           # build environment; never introduce it as a GitHub commit.
-          git restore --staged -- mobile/google-services.json
+          git restore --staged -- mobile/google-services.json || true
           git diff --cached --check
           if git diff --cached --name-only | grep -v '^mobile/' ; then
             echo "Refusing to commit unexpected changes outside Android mobile/"
