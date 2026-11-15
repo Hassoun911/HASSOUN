@@ -28,7 +28,7 @@ jobs:
       CI: '1'
       NODE_ENV: production
       IOS_APP_VERSION: '1.0.45'
-      IOS_BUILD_NUMBER: '2026111501'
+      IOS_BUILD_NUMBER: '2026111502'
       IOS_BUNDLE_ID: 'ca.wopt.windsorprayertimes'
       IOS_TEAM_ID: 'WZ49WVUVU4'
     steps:
@@ -178,6 +178,10 @@ jobs:
               src=re.sub(r'buildNumber:\s*"[^"]+"','buildNumber: "'+os.environ["IOS_BUILD_NUMBER"]+'"',src,count=1)
           else:
               src=src.replace('bundleIdentifier: "ca.wopt.windsorprayertimes",','bundleIdentifier: "ca.wopt.windsorprayertimes",\n    buildNumber: "'+os.environ["IOS_BUILD_NUMBER"]+'",',1)
+          # Existing App Store version supports both iPhone and iPad.
+          # Preserve both device families to prevent App Store Connect 90101.
+          src,n=re.subn(r'supportsTablet:\\s*(?:true|false)', 'supportsTablet: true', src, count=1)
+          assert n==1, "Missing ios.supportsTablet setting"
           assert f'buildNumber: "{os.environ["IOS_BUILD_NUMBER"]}"' in src
           path.write_text(src)
           PY
@@ -219,6 +223,15 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="$HASSOUN_PROFILE_UUID" \
             archive
           test -d "$RUNNER_TEMP/Hassoun.xcarchive/Products/Applications/Hassoun.app"
+          APP_INFO="$RUNNER_TEMP/Hassoun.xcarchive/Products/Applications/Hassoun.app/Info.plist"
+          APP_INFO="$APP_INFO" python3 - <<'PY'
+          import os,plistlib
+          from pathlib import Path
+          info=plistlib.loads(Path(os.environ["APP_INFO"]).read_bytes())
+          device_families=set(info.get("UIDeviceFamily",[]))
+          assert {1,2}.issubset(device_families), f"App Store 90101: missing iPhone or iPad support; UIDeviceFamily={sorted(device_families)}"
+          print("Archive supports iPhone and iPad (UIDeviceFamily 1,2)")
+          PY
 
       - name: Export signed App Store IPA
         run: |
@@ -245,6 +258,14 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO" | grep -Fx "$IOS_BUNDLE_ID"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO" | grep -Fx "$IOS_APP_VERSION"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO" | grep -Fx "$IOS_BUILD_NUMBER"
+          IPA_INFO="$INFO" python3 - <<'PY'
+          import os,plistlib
+          from pathlib import Path
+          info=plistlib.loads(Path(os.environ["IPA_INFO"]).read_bytes())
+          families=set(info.get("UIDeviceFamily",[]))
+          assert {1,2}.issubset(families), f"IPA missing required iPhone/iPad device support: {sorted(families)}"
+          print("IPA verified for iPhone and iPad")
+          PY
           echo "Verified signed IPA bundle/version/build."
 
       - name: Store signed IPA securely as GitHub Actions artifact
