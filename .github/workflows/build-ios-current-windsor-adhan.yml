@@ -34,8 +34,8 @@ jobs:
           cache-dependency-path: ios/package-lock.json
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install iOS widget dependencies for typechecking and EAS
-        run: npx expo install @expo/ui expo-widgets --npm
+      - name: Install optional widget types for static validation only
+        run: npm install --no-save --no-audit --no-fund @expo/ui expo-widgets
       - name: Prepare custom Apple notification sounds
         run: |
           set -euo pipefail
