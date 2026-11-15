@@ -17,10 +17,10 @@ def replace_once(old, new):
         raise SystemExit(f"Release source mismatch; expected one anchor, found {text.count(old)}: {old[:90]!r}")
     text = text.replace(old, new, 1)
 
-replace_once(
-    "  Image,\n  Pressable,",
-    "  Image,\n  Modal,\n  Pressable,",
-)
+# The reconstructed v1.0.44 Home uses a different React Native import
+# ordering from main. Insert Modal beside Pressable, not a specific icon import.
+if 'Modal,' not in text:
+    replace_once("  Pressable,\n", "  Modal,\n  Pressable,\n")
 
 replace_once(
     '  const [email, setEmail] = useState("");',
