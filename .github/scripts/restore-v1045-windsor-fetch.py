@@ -28,7 +28,11 @@ if insert_at < 0:
 if insert_at < 0:
     raise SystemExit("No safe injection point in historical prayer source")
 current = current[:insert_at] + fragment + "\n" + current[insert_at:]
-if "OFFICIAL_WINDSOR_URL" not in current:
-    raise SystemExit("Canonical Windsor URL missing in historical prayer source")
+if "const OFFICIAL_WINDSOR_URL =" not in current:
+    url_line = next((line for line in original.splitlines() if line.startswith("const OFFICIAL_WINDSOR_URL =")), None)
+    anchor = "function timeout<T>("
+    if not url_line or anchor not in current:
+        raise SystemExit("Cannot restore canonical Windsor URL in historical loader")
+    current = current.replace(anchor, url_line + "\n" + anchor, 1)
 target.write_text(current, encoding="utf-8")
 print("HASSOUN_V1045_EARLY_WINDSOR_HELPER_RESTORED")
