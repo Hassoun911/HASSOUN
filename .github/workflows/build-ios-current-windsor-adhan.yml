@@ -78,6 +78,13 @@ jobs:
           path.write_text(contents)
           print("iOS buildNumber",version)
           PY
+      - name: Reproduce native iOS Prebuild before paid EAS build
+        run: |
+          set -euo pipefail
+          npx expo prebuild --platform ios --clean --no-install
+          test -f ios/Podfile
+          test -s ios/Hassoun/Supporting/Expo.plist || true
+          rm -rf ios
       - name: Verify Expo login
         run: |
           test -n "${EXPO_TOKEN:-}"
