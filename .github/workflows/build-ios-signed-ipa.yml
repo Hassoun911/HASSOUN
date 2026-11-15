@@ -1,6 +1,10 @@
 name: Build signed Hassoun iPhone IPA on GitHub Xcode
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-ios-signed-ipa.yml'
   workflow_dispatch:
     inputs:
       upload_to_testflight:
@@ -143,10 +147,10 @@ jobs:
           from pathlib import Path
           path=Path("app.config.ts")
           src=path.read_text()
-          src,n=re.subn(r'version:\s*"[^"]+"',f'version: "{os.environ["IOS_APP_VERSION"]}"',src,count=1)
+          src,n=re.subn(r'version:\s*"[^"]+"','version: "'+os.environ["IOS_APP_VERSION"]+'"',src,count=1)
           assert n==1
           if re.search(r'buildNumber:\s*"[^"]+"',src):
-              src=re.sub(r'buildNumber:\s*"[^"]+"',f'buildNumber: "{os.environ["IOS_BUILD_NUMBER"]}"',src,count=1)
+              src=re.sub(r'buildNumber:\s*"[^"]+"','buildNumber: "'+os.environ["IOS_BUILD_NUMBER"]+'"',src,count=1)
           else:
               src=src.replace('bundleIdentifier: "ca.wopt.windsorprayertimes",','bundleIdentifier: "ca.wopt.windsorprayertimes",\n    buildNumber: "'+os.environ["IOS_BUILD_NUMBER"]+'",',1)
           assert f'buildNumber: "{os.environ["IOS_BUILD_NUMBER"]}"' in src
