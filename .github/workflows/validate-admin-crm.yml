@@ -1,0 +1,23 @@
+name: Validate HASSOUN Admin CRM
+on:
+  push:
+    branches: [work/hassoun-1.0-store-admin]
+    paths:
+      - 'admin-crm/**'
+      - '.github/workflows/validate-admin-crm.yml'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin-crm/package-lock.json
+      - run: npm ci
+      - run: npm run build
