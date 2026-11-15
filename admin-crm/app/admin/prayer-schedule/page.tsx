@@ -76,7 +76,7 @@ export default function PrayerScheduleAdminPage() {
     const check = async () => {
       try {
         const data = await call("/admin/prayer-schedule?month=" + encodeURIComponent(monthKeyNow())) as Status;
-        if (data.currentMonth && /^\\d{4}-(0[1-9]|1[0-2])$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth);
+        if (data.currentMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth);
       } catch { /* Keep the last server-confirmed month when offline. */ }
     };
     const timer = setInterval(() => { void check(); }, 15 * 60_000);
