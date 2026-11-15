@@ -1,0 +1,86 @@
+name: Build HASSOUN Android v1.0.45 from Approved v1.0.44
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-v1045-approved-store-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hassoun-v1045-approved-store-candidate
+  cancel-in-progress: true
+
+jobs:
+  build-approved-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_EAS_PROJECT_ID: ${{ vars.EXPO_PUBLIC_EAS_PROJECT_ID || '69276452-f6f2-4d13-80e8-399ab32746ff' }}
+      EXPO_PUBLIC_PUSH_API_URL: ${{ vars.EXPO_PUBLIC_PUSH_API_URL || 'https://wopt-prayer-push.wopt-windsor.workers.dev' }}
+    steps:
+      - name: Checkout HASSOUN with approved historical source commit
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Reconstruct tested v1.0.44 release source with current Windsor calendar
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/fix-v1044-build-source.py
+          bash .github/scripts/build-v1045-from-approved-v1044.sh
+
+      - name: Upload approved-branded Android release APK for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hassoun-v1.0.45-approved-v1.0.44-base-week-month-APK
+          path: |
+            mobile/android/app/build/outputs/apk/release/Hassoun-v1.0.45-current-windsor-week-month.apk
+            mobile/android/app/build/outputs/apk/release/Hassoun-v1.0.45-current-windsor-week-month.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Prepare new Android store version locally
+        working-directory: mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('eas.json')
+          data=json.loads(p.read_text())
+          data.setdefault('cli', {})['appVersionSource']='local'
+          data.setdefault('build', {}).setdefault('production', {})['autoIncrement']=False
+          p.write_text(json.dumps(data,indent=2)+'\n')
+          PY
+          grep -q 'version: "1.0.45"' app.config.ts
+          grep -q 'versionCode: 89' app.config.ts
+          test -n "${EXPO_TOKEN:-}"
+
+      - name: Build signed v1.0.45 Play Store AAB candidate - no submission
+        working-directory: mobile
+        shell: bash
+        run: |
+          npx --yes eas-cli@latest build --platform android --profile production --non-interactive --wait --message "Hassoun v1.0.45 - approved v1.0.44 logo/layout/Adhan + Windsor live times + weekly/monthly home"
