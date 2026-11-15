@@ -18,7 +18,7 @@ s = s.replace(anchor, insertion, 1)
 # otherwise v1.0.38 rewrites the loader and deletes the live fetch helper.
 typecheck_anchor = 'cd mobile\nnpm install --no-save --include=optional'
 assert s.count(typecheck_anchor) == 1, "Cannot find final historical patch boundary"
-s = s.replace(typecheck_anchor, 'python3 .github/scripts/patch-v1045-current-windsor-calendar.py\n\n' + typecheck_anchor, 1)
+s = s.replace(typecheck_anchor, 'python3 .github/scripts/patch-v1045-nearest-mosque-autoload.py\npython3 .github/scripts/patch-v1045-current-windsor-calendar.py\n\n' + typecheck_anchor, 1)
 s = s.replace("1.0.43", "1.0.45")
 s = s.replace("versionCode: 87", "versionCode: 89")
 s = s.replace("HASSOUN_ANDROID_V1043_SOURCE_VERIFIED", "HASSOUN_ANDROID_V1045_SOURCE_VERIFIED")
