@@ -133,7 +133,26 @@ const scheduleStyles = StyleSheet.create({
 '''
 home_path.write_text(text, encoding="utf-8")
 
-prayer = Path("mobile/src/prayerData.ts").read_text(encoding="utf-8")
+prayer_path = Path("mobile/src/prayerData.ts")
+prayer = prayer_path.read_text(encoding="utf-8")
+# The historical v1.0.44 GPS patch rewrites the prayer loader. Preserve its
+# changes, but restore the missing official live fetch helper from the checked-in
+# latest source saved by the reconstruction process before the reset.
+if "async function fetchOfficialWindsorSchedule(" not in prayer:
+    latest_path = Path("/tmp/hassoun-latest/mobile/src/prayerData.ts")
+    latest = latest_path.read_text(encoding="utf-8")
+    start = latest.index("async function fetchOfficialWindsorSchedule(")
+    end = latest.index("\nfunction windsorFallback(", start)
+    helper = latest[start:end]
+    insert_at = prayer.find("function windsorFallback(")
+    if insert_at == -1:
+        insert_at = prayer.find("export async function loadInitialPrayerTimes(")
+    if insert_at == -1:
+        raise SystemExit("Cannot safely restore official Windsor helper in reconstructed release")
+    prayer = prayer[:insert_at] + helper + "\n" + prayer[insert_at:]
+    prayer_path.write_text(prayer, encoding="utf-8")
+    print("Restored canonical Windsor JSON network fetch helper in protected release")
+
 must_have = [
     "Hassoun911/HASSOUN/main/windsor_islamic_association_2026_prayer_times.json",
     "fetchOfficialWindsorSchedule",
