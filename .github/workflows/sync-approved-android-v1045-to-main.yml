@@ -106,6 +106,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --only -- mobile -m "Make Android main source canonical v1.0.45 from approved Play v1.0.44" -m "Replaces older mobile baseline with verified approved icon, native Azan, live Windsor JSON, weekly/monthly home view and GPS nearest-mosque fallback. Original main backed up at backup/android-main-before-v1045-source-sync."
+          git commit --only -m "Make Android main source canonical v1.0.45 from approved Play v1.0.44" -m "Replaces older mobile baseline with verified approved icon, native Azan, live Windsor JSON, weekly/monthly home view and GPS nearest-mosque fallback. Original main backed up at backup/android-main-before-v1045-source-sync." -- mobile
           git push origin HEAD:main
           echo "ANDROID_MAIN_CANONICAL_V1045_SYNC_COMPLETE"
