@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import IslamicQuiz from "./IslamicQuiz";
+import IslamicQuiz from "./DailyIslamicQuizScreen";
 import MultiplayerGames, { type MultiplayerGameType } from "./MultiplayerGames";
 import BrandMark from "./BrandMark";
 import type { QuizLocale, QuizStats } from "./islamicQuiz";
