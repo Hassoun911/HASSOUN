@@ -6,6 +6,7 @@ on:
       - '.github/workflows/build-ios-current-windsor-adhan.yml'
       - 'ios/app.config.ts'
       - 'ios/src/notifications.ts'
+      - 'ios/App.tsx'
   workflow_dispatch:
 permissions:
   contents: read
