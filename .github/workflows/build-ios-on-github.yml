@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - ".github/workflows/build-ios-on-github.yml"
+      - "mobile/src/QuizGamesHub.tsx"
+      - "mobile/src/IslamicQuiz.tsx"
+      - "mobile/src/DailyIslamicQuizScreen.tsx"
 
 permissions:
   contents: read
