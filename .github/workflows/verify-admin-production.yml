@@ -20,4 +20,6 @@ jobs:
           curl -sS --max-time 20 -L -D /tmp/page-headers -o /tmp/page-body -w "ADMIN page HTTP %{http_code}\n" "https://admin.hassoun.app/admin/prayer-schedule?probe=${GITHUB_RUN_ID}"
           grep -Ei '^HTTP/|^x-vercel-cache:|^x-vercel-id:' /tmp/page-headers || true
           grep -oE '_next/static/chunks/[^" ]+\.js' /tmp/page-body | head -12 || true
-          if grep -q 'Checking current Windsor date' /tmp/page-body; then echo 'Date text found in HTML'; else echo 'Date text NOT found in HTML'; fi
+          if grep -q 'Current Windsor date' /tmp/page-body; then echo 'Server-rendered Windsor date text found in HTML'; else echo 'SERVER-RENDERED WINDSOR DATE MISSING'; exit 1; fi
+          if grep -q '2026-11-14' /tmp/page-body; then echo 'Windsor November 14 date found in live HTML'; else echo 'Windsor date not in HTML'; fi
+          if grep -q '"currentMonth":"2026-11"' /tmp/date-body; then echo 'Live Windsor date endpoint correct'; else echo 'Live Windsor date endpoint WRONG'; exit 1; fi
