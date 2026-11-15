@@ -31,7 +31,8 @@ function monthKeyNow() {
   return `${get("year")}-${get("month")}`;
 }
 function labelPrayer(p: Prayer) { return p.charAt(0).toUpperCase() + p.slice(1); }
-function monthName(key: string) { const [y,m] = key.split("-").map(Number); return new Intl.DateTimeFormat("en-CA", { month:"short", timeZone:"UTC" }).format(new Date(Date.UTC(y,m-1,1))); }
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+function monthName(key: string) { const match = /^\d{4}-(0[1-9]|1[0-2])$/.exec(key); return match ? MONTH_LABELS[Number(match[1]) - 1] : key; }
 function statusLabel(item?: MonthInfo | null) {
   if (!item?.onFile) return "Missing";
   if (item.status === "approved") return "Approved";
