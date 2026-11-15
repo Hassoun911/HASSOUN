@@ -292,7 +292,7 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
     try {
       const result = Platform.OS === "ios" ? await scheduleIosTestAdhan("fajr", 30) : await scheduleAndroidTestAdhan("fajr", 30);
       if (!result.available) { Alert.alert("Adhan unavailable", "This build cannot schedule the Adhan test."); return; }
-      if (Platform.OS === "ios") { if (!result.granted) { Alert.alert("Notifications are off", "Allow sound notifications for Hassoun in iPhone Settings."); return; } Alert.alert("iOS Adhan test scheduled", "Lock the iPhone. The Fajr Adhan clip should play with a notification in about 30 seconds."); return; }
+      if (Platform.OS === "ios") { if (!("granted" in result) || !result.granted) { Alert.alert("Notifications are off", "Allow sound notifications for Hassoun in iPhone Settings."); return; } Alert.alert("iOS Adhan test scheduled", "Lock the iPhone. The Fajr Adhan clip should play with a notification in about 30 seconds."); return; }
       if (!result.exact) {
         Alert.alert("Allow Alarms & reminders", "Exact alarm access is off. Enable it, return to Hassoun, then run the Adhan test again.", [
           { text: "Cancel", style: "cancel" }, { text: "Open settings", onPress: openExactAlarmSettings }
