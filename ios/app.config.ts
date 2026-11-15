@@ -39,6 +39,7 @@ const config: ExpoConfig = {
     ]
   },
   plugins: [
+    "expo-widgets",
     "expo-audio",
     [
       "expo-notifications",
