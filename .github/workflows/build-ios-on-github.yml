@@ -1,0 +1,87 @@
+name: Build Hassoun iOS on GitHub Mac
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-ios-on-github.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hassoun-ios-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-ios:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout current main source
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install exact dependencies
+        working-directory: mobile
+        run: npm ci --include=dev --no-audit --no-fund
+
+      - name: Generate and verify Quran data
+        working-directory: mobile
+        run: npm run quran:data
+
+      - name: Validate TypeScript
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Validate actual iOS JavaScript bundle
+        working-directory: mobile
+        run: npx expo export --platform ios --output-dir /tmp/hassoun-ios-bundle
+
+      - name: Generate native Xcode project locally on GitHub runner
+        working-directory: mobile
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods
+        working-directory: mobile/ios
+        run: pod install --repo-update
+
+      - name: Compile iOS app with Xcode without Expo EAS
+        working-directory: mobile/ios
+        run: |
+          set -euo pipefail
+          WORKSPACE=$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          test -n "$WORKSPACE"
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list -json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["workspace"]["schemes"][0])')
+          echo "Compiling $SCHEME from $WORKSPACE"
+          xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$RUNNER_TEMP/HassounDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package simulator app
+        run: |
+          set -euo pipefail
+          APP=$(find "$RUNNER_TEMP/HassounDerivedData/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/Hassoun-iOS-simulator.zip"
+
+      - name: Upload GitHub iOS build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hassoun-iOS-simulator
+          path: ${{ runner.temp }}/Hassoun-iOS-simulator.zip
+          retention-days: 14
+          if-no-files-found: error
