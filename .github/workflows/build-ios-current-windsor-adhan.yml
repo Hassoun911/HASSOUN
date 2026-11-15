@@ -4,6 +4,8 @@ on:
     branches: [release/ios-current]
     paths:
       - '.github/workflows/build-ios-current-windsor-adhan.yml'
+      - 'ios/app.config.ts'
+      - 'ios/src/notifications.ts'
   workflow_dispatch:
 permissions:
   contents: read
