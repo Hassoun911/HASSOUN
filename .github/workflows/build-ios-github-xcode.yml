@@ -134,7 +134,8 @@ jobs:
           set -euo pipefail
           WORKSPACE=$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)
           test -n "$WORKSPACE"
-          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list -json | python3 -c 'import json,sys; j=json.load(sys.stdin); print(j["workspace"]["schemes"][0])')
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          xcodebuild -workspace "$WORKSPACE" -list -json | python3 -c 'import json,sys,os; j=json.load(sys.stdin); name=os.environ.get("HASSOUN_SCHEME","Hassoun"); schemes=j["workspace"]["schemes"]; assert name in schemes, f"App scheme {name} not found: {schemes}"'
           echo "Building $SCHEME from $WORKSPACE on GitHub macOS"
           xcodebuild \
             -workspace "$WORKSPACE" \
