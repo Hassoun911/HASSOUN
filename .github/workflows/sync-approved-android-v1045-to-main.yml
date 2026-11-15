@@ -90,12 +90,12 @@ jobs:
             if any(part in {"node_modules", "build", ".gradle"} for part in path.parts):
               continue
             raw=path.read_bytes()
-            if b"\\x00" in raw: continue
+            if b"\x00" in raw: continue
             try: data=raw.decode("utf-8")
             except UnicodeDecodeError: continue
-            if not any(line.rstrip(" \\t") != line for line in data.splitlines()):
+            if not any(line.rstrip(" \t") != line for line in data.splitlines()):
               continue
-            fixed="\\n".join(line.rstrip(" \\t") for line in data.split("\\n"))
+            fixed="\n".join(line.rstrip(" \t") for line in data.split("\n"))
             path.write_text(fixed,encoding="utf-8")
             print("Normalized source whitespace:",path)
           PY
