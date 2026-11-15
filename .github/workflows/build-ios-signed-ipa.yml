@@ -134,9 +134,10 @@ jobs:
           npm ci --include=optional --ignore-scripts --no-audit --no-fund
           # Install iOS widget packages and TypeScript's macOS ARM64 binary
           # together to avoid npm pruning a prior --no-save dependency.
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @expo/ui expo-widgets expo-font @typescript/typescript-darwin-arm64@7.0.2
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @expo/ui@57.0.8 expo-widgets@57.0.8 expo-font@57.0.1 expo-asset@57.0.10 @typescript/typescript-darwin-arm64@7.0.2
           test -d node_modules/@typescript/typescript-darwin-arm64
           test -d node_modules/expo-font
+          node -e 'const f=require("./node_modules/expo-asset/package.json");const e=require("./node_modules/expo/package.json");if(f.version!=="57.0.10"||e.version!=="57.0.12")process.exit(1);console.log("Pinned Expo/asset versions verified",e.version,f.version)'
           npm run typecheck
 
       - name: Prepare iOS notification sounds and PNG assets
