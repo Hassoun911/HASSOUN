@@ -76,8 +76,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Historical git checkout stages script and logo differences too.
+          # Preserve those files on main: only mobile/ is authorized to change.
+          git restore --staged -- .github scripts || true
           git add -A -- mobile
           git diff --cached --check
+          if git diff --cached --name-only | grep -v '^mobile/' ; then
+            echo "Refusing to commit unexpected changes outside Android mobile/"
+            exit 1
+          fi
           git diff --cached --name-status > /tmp/hassoun-android-source-diff.txt
           echo "Changed Android source files:"
           cat /tmp/hassoun-android-source-diff.txt
@@ -99,6 +106,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Make Android main source canonical v1.0.45 from approved Play v1.0.44" -m "Replaces older mobile baseline with verified approved icon, native Azan, live Windsor JSON, weekly/monthly home view and GPS nearest-mosque fallback. Original main backed up at backup/android-main-before-v1045-source-sync."
+          git commit --only -- mobile -m "Make Android main source canonical v1.0.45 from approved Play v1.0.44" -m "Replaces older mobile baseline with verified approved icon, native Azan, live Windsor JSON, weekly/monthly home view and GPS nearest-mosque fallback. Original main backed up at backup/android-main-before-v1045-source-sync."
           git push origin HEAD:main
           echo "ANDROID_MAIN_CANONICAL_V1045_SYNC_COMPLETE"
