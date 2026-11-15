@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useState } from "react";
 import {
+  Platform,
   ActivityIndicator,
   Alert,
   AppState,
@@ -33,7 +34,7 @@ import {
   type PrayerAlertPreferences
 } from "./src/alertPreferences";
 import { badgeForWins, EMPTY_QUIZ_STATS, loadQuizStats, nextBadge, type QuizStats } from "./src/islamicQuiz";
-import { disablePrayerNotifications, scheduleIslamicEventReminders, schedulePrayerNotifications, scheduleTestReminder } from "./src/notifications";
+import { disablePrayerNotifications, scheduleIslamicEventReminders, schedulePrayerNotifications, scheduleTestReminder, scheduleIosTestAdhan } from "./src/notifications";
 import { openExactAlarmSettings, scheduleAndroidTestAdhan } from "./src/prayerAudio";
 import { loadPrayerTimes, type PrayerLocation } from "./src/prayerData";
 import PrayerAlertPreferenceGrid from "./src/PrayerAlertPreferenceGrid";
@@ -289,8 +290,9 @@ export default function App({ onOpenEmailAlerts }: AppProps) {
 
   const testAdhan = async () => {
     try {
-      const result = await scheduleAndroidTestAdhan("fajr", 30);
-      if (!result.available) { Alert.alert("Native Adhan unavailable", "This build does not contain the native Android prayer-audio module."); return; }
+      const result = Platform.OS === "ios" ? await scheduleIosTestAdhan("fajr", 30) : await scheduleAndroidTestAdhan("fajr", 30);
+      if (!result.available) { Alert.alert("Adhan unavailable", "This build cannot schedule the Adhan test."); return; }
+      if (Platform.OS === "ios") { if (!result.granted) { Alert.alert("Notifications are off", "Allow sound notifications for Hassoun in iPhone Settings."); return; } Alert.alert("iOS Adhan test scheduled", "Lock the iPhone. The Fajr Adhan clip should play with a notification in about 30 seconds."); return; }
       if (!result.exact) {
         Alert.alert("Allow Alarms & reminders", "Exact alarm access is off. Enable it, return to Hassoun, then run the Adhan test again.", [
           { text: "Cancel", style: "cancel" }, { text: "Open settings", onPress: openExactAlarmSettings }
