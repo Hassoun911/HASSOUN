@@ -1,0 +1,84 @@
+name: Build HASSOUN iOS Current - Windsor Sync and Adhan
+on:
+  push:
+    branches: [release/ios-current]
+    paths:
+      - '.github/workflows/build-ios-current-windsor-adhan.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-hassoun-ios-current-windsor
+  cancel-in-progress: true
+jobs:
+  build-ios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: ios
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_EAS_PROJECT_ID: ${{ vars.EXPO_PUBLIC_EAS_PROJECT_ID || '69276452-f6f2-4d13-80e8-399ab32746ff' }}
+      EXPO_PUBLIC_PUSH_API_URL: ${{ vars.EXPO_PUBLIC_PUSH_API_URL || 'https://wopt-prayer-push.wopt-windsor.workers.dev' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/ios-current
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ios/package-lock.json
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare custom Apple notification sounds
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          bash scripts/prepare-ios-athan-sounds.sh
+          test -s assets/hassoun_fajr_athan.wav
+          test -s assets/hassoun_athan.wav
+          for file in assets/hassoun_fajr_athan.wav assets/hassoun_athan.wav; do
+            ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$file"
+          done
+      - name: Verify iOS Adhan and weekly/monthly source
+        run: |
+          set -euo pipefail
+          grep -q 'shouldPlaySound: true' src/notifications.ts
+          grep -q 'hassoun_fajr_athan.wav' src/notifications.ts
+          grep -q 'hassoun_athan.wav' src/notifications.ts
+          grep -q 'hassoun_athan.wav' app.config.ts
+          grep -q 'Show Weekly' src/HomePrayerPanel.tsx
+          grep -q 'Show Monthly' src/HomePrayerPanel.tsx
+          grep -q 'HomePrayerPanel' App.tsx
+          grep -q 'Promise.allSettled' src/prayerData.ts
+          npm run typecheck
+      - name: Verify Expo iOS configuration
+        run: |
+          npx expo config --type public > /tmp/hassoun-ios-config.json
+          grep -q 'hassoun_fajr_athan.wav' /tmp/hassoun-ios-config.json
+          grep -q 'hassoun_athan.wav' /tmp/hassoun-ios-config.json
+      - name: Set unique iOS build number
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,re
+          path=Path("app.config.ts")
+          contents=path.read_text()
+          version=f'20261115.{os.environ["GITHUB_RUN_NUMBER"]}'
+          contents,n=re.subn(r'buildNumber:\\s*"[^"]+"',f'buildNumber: "{version}"',contents,count=1)
+          assert n==1, "iOS build number not found"
+          path.write_text(contents)
+          print("iOS buildNumber",version)
+          PY
+      - name: Verify Expo login
+        run: |
+          test -n "${EXPO_TOKEN:-}"
+          npx --yes eas-cli@latest whoami
+      - name: Build signed iOS IPA (do not submit)
+        env:
+          EAS_BUILD_NO_EXPO_GO_WARNING: 'true'
+        run: |
+          npx --yes eas-cli@latest build --platform ios --profile production --non-interactive --wait --message "Windsor live schedule, weekly/monthly, iOS Adhan custom sound"
