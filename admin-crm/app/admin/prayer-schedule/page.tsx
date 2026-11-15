@@ -63,27 +63,21 @@ export default function PrayerScheduleAdminPage() {
   async function load(target = month) {
     if (!token) { location.replace("/admin/"); return; }
     setBusy("load"); setMessage("");
-    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); if (data.currentMonth && /^\d{4}-\d{2}$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
+    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to load schedule"); }
     finally { setBusy(""); }
   }
   useEffect(() => { void load(month); }, [month]);
-  // Ask the Worker for the Windsor calendar month while this page is open.
-  // Browser/device clocks can be wrong; do not overwrite the server's month
-  // with a client-side guess. Refreshing this marker doesn't discard edits.
+  // Keep the CURRENT marker tied to Windsor's calendar month.
+  // The data API's month may refer to the schedule being edited, and must never
+  // overwrite the live calendar marker with a stale selected month.
   useEffect(() => {
-    const checkServerMonth = async () => {
-      try {
-        const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(monthKeyNow())}`) as Status;
-        if (data.currentMonth && /^\d{4}-\d{2}$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth);
-      } catch { /* Retain the last known month if temporarily offline. */ }
-    };
-    const timer = setInterval(() => { void checkServerMonth(); }, 15 * 60_000);
+    const checkMonth = () => setCurrentMonth(monthKeyNow());
+    checkMonth();
+    const timer = setInterval(checkMonth, 60_000);
     return () => clearInterval(timer);
   }, []);
 
-  const dates = useMemo(() => Object.keys(rows).sort(), [rows]);
-  const rowCount = dates.length;
   const selectedInfo = useMemo(() => status?.yearOverview?.find((x) => x.month === month) || null, [status, month]);
   const needsPublish = selectedInfo?.status === "pulled" || dirty;
   const canApproveExisting = Boolean(selectedInfo?.onFile) && selectedInfo?.status === "not-approved" && !dirty;
@@ -174,7 +168,7 @@ export default function PrayerScheduleAdminPage() {
 
       <section style={s.yearCard}>
         <div style={s.yearHead}><div><div style={s.cardTitle}>{month.slice(0,4)} month status</div><div style={s.help}>See what is already stored, what has been pulled for review, and what has been approved.</div></div><div style={s.legend}><span style={{...s.legendItem,...statusStyle({onFile:true,status:"approved"} as MonthInfo)}}>✓ Approved</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"pulled"} as MonthInfo)}}>Pulled — review</span><span style={{...s.legendItem,...statusStyle({onFile:true,status:"not-approved"} as MonthInfo)}}>On file — not approved</span><span style={{...s.legendItem,...statusStyle(null)}}>Missing</span></div></div>
-        <div style={s.monthGrid}>{[...(status?.yearOverview || [])].sort((a,b)=>a.month===currentMonth?-1:b.month===currentMonth?1:a.month.localeCompare(b.month)).map((item) => {
+        <div style={s.monthGrid}>{[...(status?.yearOverview || [])].sort((a,b)=>(a.month===currentMonth?0:1)-(b.month===currentMonth?0:1)||a.month.localeCompare(b.month)).map((item) => {
           const isCurrent = item.month === currentMonth;
           const isSelected = item.month === month;
           return <button key={item.month} onClick={() => setMonth(item.month)} aria-current={isCurrent?"date":undefined} aria-pressed={isSelected} style={{...s.monthTile,...statusStyle(item),...(isCurrent?{border:"2px solid #08765d",boxShadow:"0 0 0 2px rgba(8,118,93,.13)",background:item.onFile?"#dff4e9":"#fff3dd"}:{}),...(isSelected?s.monthSelected:{})}}>
