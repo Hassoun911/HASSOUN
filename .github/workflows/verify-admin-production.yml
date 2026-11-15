@@ -1,0 +1,23 @@
+name: Verify HASSOUN Admin Production Routes
+on:
+  workflow_dispatch:
+  push:
+    branches: [work/hassoun-1.0-store-admin]
+    paths:
+      - '.github/workflows/verify-admin-production.yml'
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe live admin page and Windsor date route
+        run: |
+          set -u
+          echo "Checking uncached public endpoint..."
+          curl -sS --max-time 20 -L -D /tmp/date-headers -o /tmp/date-body -w "DATE endpoint HTTP %{http_code}\n" "https://admin.hassoun.app/api/windsor-date?probe=${GITHUB_RUN_ID}"
+          grep -Ei '^HTTP/|^cache-control:|^x-vercel-cache:|^x-vercel-id:' /tmp/date-headers || true
+          head -c 700 /tmp/date-body; echo
+          echo "Checking page HTML..."
+          curl -sS --max-time 20 -L -D /tmp/page-headers -o /tmp/page-body -w "ADMIN page HTTP %{http_code}\n" "https://admin.hassoun.app/admin/prayer-schedule?probe=${GITHUB_RUN_ID}"
+          grep -Ei '^HTTP/|^x-vercel-cache:|^x-vercel-id:' /tmp/page-headers || true
+          grep -oE '_next/static/chunks/[^" ]+\.js' /tmp/page-body | head -12 || true
+          if grep -q 'Checking current Windsor date' /tmp/page-body; then echo 'Date text found in HTML'; else echo 'Date text NOT found in HTML'; fi
