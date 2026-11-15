@@ -11,11 +11,14 @@ from pathlib import Path
 src = Path(".github/scripts/build-v1043-windsor-directory-resume.sh")
 s = src.read_text(encoding="utf-8")
 anchor = 'python3 .github/scripts/fix-v1043-windsor-directory-and-nested-resume.py\n'
-insertion = (anchor
-    + 'python3 .github/scripts/fix-v1044-gps-prayer-mosque-display.py\n'
-    + 'python3 .github/scripts/patch-v1045-current-windsor-calendar.py\n')
+insertion = anchor + 'python3 .github/scripts/fix-v1044-gps-prayer-mosque-display.py\n'
 assert s.count(anchor) == 1, "v1.0.43 reconstruction anchor changed"
 s = s.replace(anchor, insertion, 1)
+# Put the new compatibility/UI patch AFTER all historical source patches,
+# otherwise v1.0.38 rewrites the loader and deletes the live fetch helper.
+typecheck_anchor = 'cd mobile\nnpm install --no-save --include=optional'
+assert s.count(typecheck_anchor) == 1, "Cannot find final historical patch boundary"
+s = s.replace(typecheck_anchor, 'python3 .github/scripts/patch-v1045-current-windsor-calendar.py\n\n' + typecheck_anchor, 1)
 s = s.replace("1.0.43", "1.0.45")
 s = s.replace("versionCode: 87", "versionCode: 89")
 s = s.replace("HASSOUN_ANDROID_V1043_SOURCE_VERIFIED", "HASSOUN_ANDROID_V1045_SOURCE_VERIFIED")
