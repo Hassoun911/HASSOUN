@@ -40,7 +40,7 @@ function withNotificationScheduleLock<T>(operation: () => Promise<T>): Promise<T
 
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => ({
-    shouldPlaySound: notification.request.content.data?.kind !== "athan",
+    shouldPlaySound: true,
     shouldSetBadge: false,
     shouldShowBanner: true,
     shouldShowList: true
@@ -160,7 +160,7 @@ function notificationContent(event: PrayerEvent, locale: "en" | "ar", locationLa
   const common = { data: { eventId: event.id, dateKey: event.dateKey, prayer: event.prayer, kind: event.kind } };
   if (event.kind === "twenty") return { ...common, title: locale === "ar" ? `بقي ٢٠ دقيقة على صلاة ${prayer}` : `${prayer} in 20 minutes`, body: `${time} • ${locationLabel}`, sound: "attention_chime.wav" };
   if (event.kind === "ten") return { ...common, title: locale === "ar" ? `بقي ١٠ دقائق على صلاة ${prayer}` : `${prayer} in 10 minutes`, body: `${time} • ${locationLabel}`, sound: "attention_chime.wav" };
-  return { ...common, title: locale === "ar" ? `حان الآن وقت صلاة ${prayer}` : `It is time for ${prayer}`, body: `${time} • ${locationLabel}` };
+  return { ...common, title: locale === "ar" ? `حان الآن وقت صلاة ${prayer}` : `It is time for ${prayer}`, body: `${time} • ${locationLabel}`, ...(Platform.OS === "ios" ? { sound: event.prayer === "fajr" ? "hassoun_fajr_athan.wav" : "hassoun_athan.wav" } : {}) };
 }
 
 function eventEnabled(event: PrayerEvent, preferences: PrayerAlertPreferences) {
