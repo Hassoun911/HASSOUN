@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: hassoun-android-source-main-sync
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   sync-android:
