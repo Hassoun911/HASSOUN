@@ -148,7 +148,7 @@ export async function loadPrayerTimes(): Promise<LoadedPrayerTimes> {
     }
     const currentData = current.value;
     const nextData = next.status === "fulfilled" ? next.value.prayer_times || {} : {};
-    const prayerTimes = mergePrayerTimes(currentData.prayer_times, nextData);
+    const prayerTimes = mergePrayerTimes(currentData.prayer_times || {}, nextData);
     const apiLabel = currentData.location?.label && currentData.location.label !== "Current location" ? currentData.location.label : null;
     const label = apiLabel || await locationLabel(latitude, longitude);
     const location: PrayerLocation = {
