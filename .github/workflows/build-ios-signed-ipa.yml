@@ -81,7 +81,7 @@ jobs:
                   if not normalized or len(normalized)%4:
                       raise ValueError("invalid Base64 padding/length")
                   decoded=base64.b64decode(normalized,validate=True)
-                  if len(decoded)<minimum or not decoded.startswith(b"\\x30"):
+                  if len(decoded)<minimum or not decoded.startswith(b"\x30"):
                       raise ValueError("decoded bytes are not the expected Apple signing file")
               except (ValueError,binascii.Error):
                   print(f"::error::{env_name} GitHub Secret is not valid Base64 for its signing file. Recopy the ORIGINAL file as one encoded string; do not paste command text or an already encoded value twice.")
