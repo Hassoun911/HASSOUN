@@ -113,12 +113,16 @@ private final class QuranAudioEngine: NSObject {
       state = "error"
       return
     }
-    playQueue(
-      items: [QuranQueueItem(url: url, title: "Qur’an", subtitle: "Hassoun")],
-      startIndex: 0,
-      repeatPlayback: false,
-      requestedSpeed: requestedSpeed
-    )
+    // Route single-track playback through the existing JSON queue parser.
+    // There is no items: overload on this engine, and using one here breaks
+    // native Swift compilation even though the JS bundle is valid.
+    let entry: [[String: String]] = [["url": url.absoluteString, "title": "Qur’an", "subtitle": "Hassoun"]]
+    guard let data = try? JSONSerialization.data(withJSONObject: entry),
+          let json = String(data: data, encoding: .utf8) else {
+      state = "error"
+      return
+    }
+    playQueue(json: json, startIndex: 0, repeatPlayback: false, requestedSpeed: requestedSpeed)
   }
 
   func playQueue(json: String, startIndex: Int, repeatPlayback: Bool, requestedSpeed: Double) {
