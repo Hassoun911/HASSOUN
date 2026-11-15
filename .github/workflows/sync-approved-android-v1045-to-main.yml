@@ -79,6 +79,26 @@ jobs:
           # Historical git checkout stages script and logo differences too.
           # Preserve those files on main: only mobile/ is authorized to change.
           git restore --staged -- .github scripts || true
+          # The approved v1.0.44 reconstruction contains whitespace on one
+          # existing JSX line. Normalize trailing spaces in staged mobile
+          # text files without touching imagery, native audio, or binary files.
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path("mobile").rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".kt", ".java", ".xml", ".gradle", ".properties"}:
+              continue
+            if any(part in {"node_modules", "build", ".gradle"} for part in path.parts):
+              continue
+            raw=path.read_bytes()
+            if b"\\x00" in raw: continue
+            try: data=raw.decode("utf-8")
+            except UnicodeDecodeError: continue
+            if not any(line.rstrip(" \\t") != line for line in data.splitlines()):
+              continue
+            fixed="\\n".join(line.rstrip(" \\t") for line in data.split("\\n"))
+            path.write_text(fixed,encoding="utf-8")
+            print("Normalized source whitespace:",path)
+          PY
           git add -A -- mobile
           git diff --cached --check
           if git diff --cached --name-only | grep -v '^mobile/' ; then
