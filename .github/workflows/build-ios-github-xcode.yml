@@ -1,0 +1,148 @@
+name: Build HASSOUN iOS on GitHub macOS - Windsor Adhan
+on:
+  push:
+    branches: [release/ios-current]
+    paths:
+      - '.github/workflows/build-ios-github-xcode.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hassoun-ios-github-xcode
+  cancel-in-progress: true
+
+jobs:
+  validate-and-prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/ios-current
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ios/package-lock.json
+      - name: Install app dependencies
+        working-directory: ios
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare iOS notification sound clips from approved Android recordings
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          mkdir -p mobile/modules/prayer-audio/android/src/main/res/raw
+          git show origin/main:mobile/modules/prayer-audio/android/src/main/res/raw/fajr_adhan.mp3 > mobile/modules/prayer-audio/android/src/main/res/raw/fajr_adhan.mp3
+          git show origin/main:mobile/modules/prayer-audio/android/src/main/res/raw/azan9.mp3 > mobile/modules/prayer-audio/android/src/main/res/raw/azan9.mp3
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg python3-pil pngcheck
+          bash ios/scripts/prepare-ios-athan-sounds.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageFile
+          ImageFile.LOAD_TRUNCATED_IMAGES=True
+          for path in Path("ios/assets").rglob("*.png"):
+              with Image.open(path) as original:
+                  original.load()
+                  img=original.convert("RGBA")
+              fixed=path.with_suffix(".fixed.png")
+              img.save(fixed,format="PNG")
+              fixed.replace(path)
+              print("Verified and repaired:",path)
+          PY
+          find ios/assets -type f -name '*.png' -exec pngcheck -q '{}' ';'
+      - name: Validate iOS notification configuration and current prayer features
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          grep -q 'shouldPlaySound: true' src/notifications.ts
+          grep -q 'hassoun_athan.wav' src/notifications.ts
+          grep -q 'hassoun_fajr_athan.wav' app.config.ts
+          grep -q 'scheduleIosTestAdhan' App.tsx
+          grep -q 'Show Weekly' src/HomePrayerPanel.tsx
+          grep -q 'Show Monthly' src/HomePrayerPanel.tsx
+          grep -q 'Promise.allSettled' src/prayerData.ts
+          npm run typecheck
+      - name: Validate iOS Metro JS bundle outside EAS
+        working-directory: ios
+        env:
+          CI: '1'
+          NODE_ENV: production
+        run: npx expo export --platform ios --output-dir /tmp/hassoun-ios-export
+      - name: Upload repaired assets for native GitHub macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassoun-ios-github-native-assets
+          path: ios/assets/
+          retention-days: 7
+
+  native-xcode:
+    needs: validate-and-prepare
+    runs-on: macos-15
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/ios-current
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ios/package-lock.json
+      - name: Restore validated iOS sound and image assets
+        uses: actions/download-artifact@v4
+        with:
+          name: hassoun-ios-github-native-assets
+          path: ios/assets
+      - name: Install exact dependencies
+        working-directory: ios
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate native iOS Xcode project on GitHub
+        working-directory: ios
+        env:
+          CI: '1'
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          npx expo prebuild --platform ios --clean --no-install
+          test -f ios/Podfile
+      - name: Install CocoaPods on GitHub macOS
+        working-directory: ios/ios
+        run: pod install
+      - name: Build iOS native app with GitHub Xcode (no EAS)
+        working-directory: ios/ios
+        shell: bash
+        env:
+          CI: '1'
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          WORKSPACE=$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          test -n "$WORKSPACE"
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list -json | python3 -c 'import json,sys; j=json.load(sys.stdin); print(j["workspace"]["schemes"][0])')
+          echo "Building $SCHEME from $WORKSPACE on GitHub macOS"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/hassoun-ios-derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          APP=$(find "$RUNNER_TEMP/hassoun-ios-derived/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$APP"
+          test -f "$APP/Info.plist"
+          mkdir -p "$RUNNER_TEMP/hassoun-native-output"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/hassoun-native-output/Hassoun-iOS-GitHub-Xcode-simulator.zip"
+          echo "Native iOS simulator build succeeded on GitHub. App Store IPA requires Apple signing."
+      - name: Upload actual GitHub-built native iOS simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hassoun-iOS-GitHub-Xcode-native-simulator-app
+          path: ${{ runner.temp }}/hassoun-native-output/Hassoun-iOS-GitHub-Xcode-simulator.zip
+          if-no-files-found: error
+          retention-days: 21
