@@ -132,10 +132,9 @@ jobs:
         working-directory: ios
         run: |
           npm ci --include=optional --ignore-scripts --no-audit --no-fund
-          npm install --no-save --no-audit --no-fund @expo/ui expo-widgets
-          # TypeScript 7 ships platform-specific native binaries. npm can omit
-          # this optional dependency on GitHub's arm64 macOS image.
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @typescript/typescript-darwin-arm64@7.0.2
+          # Install iOS widget packages and TypeScript's macOS ARM64 binary
+          # together to avoid npm pruning a prior --no-save dependency.
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @expo/ui expo-widgets @typescript/typescript-darwin-arm64@7.0.2
           test -f node_modules/@typescript/typescript-darwin-arm64/lib/tsc.js || test -d node_modules/@typescript/typescript-darwin-arm64
           npm run typecheck
 
