@@ -34,6 +34,8 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Expo dependencies required by current Android screens
+        run: npx expo install expo-camera expo-linear-gradient expo-screen-orientation --npm
       - name: Verify updated Home calendar and Windsor timetable source
         run: |
           set -euo pipefail
