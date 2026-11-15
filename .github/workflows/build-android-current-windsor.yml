@@ -1,0 +1,50 @@
+name: Build HASSOUN Android Current - Windsor Sync and Calendar
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-android-current-windsor.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-hassoun-android-current-windsor
+  cancel-in-progress: true
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_EAS_PROJECT_ID: ${{ vars.EXPO_PUBLIC_EAS_PROJECT_ID || '69276452-f6f2-4d13-80e8-399ab32746ff' }}
+      EXPO_PUBLIC_PUSH_API_URL: ${{ vars.EXPO_PUBLIC_PUSH_API_URL || 'https://wopt-prayer-push.wopt-windsor.workers.dev' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify updated Home calendar and Windsor timetable source
+        run: |
+          set -euo pipefail
+          grep -q 'Show Weekly' src/HomePrayerPanel.tsx
+          grep -q 'Show Monthly' src/HomePrayerPanel.tsx
+          grep -q 'HomePrayerPanel' App.tsx
+          grep -q 'fetchOfficialWindsorSchedule' src/prayerData.ts
+          grep -q 'HASSOUN/main/windsor_islamic_association_2026_prayer_times.json' src/prayerData.ts
+          npm run typecheck
+      - name: Verify Expo login
+        run: |
+          test -n "${EXPO_TOKEN:-}"
+          npx --yes eas-cli@latest whoami
+      - name: Build installable Android APK (do not submit)
+        run: |
+          npx --yes eas-cli@latest build --platform android --profile preview --non-interactive --wait --message "Current Android Windsor live prayer schedule and weekly/monthly home view"
