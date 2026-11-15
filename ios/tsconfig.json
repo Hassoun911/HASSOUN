@@ -4,5 +4,6 @@
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "resolveJsonModule": true
-  }
+  },
+  "exclude": ["src/HassounPrayerWidget.tsx"]
 }
