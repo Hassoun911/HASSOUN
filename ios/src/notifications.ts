@@ -97,9 +97,9 @@ export async function scheduleTestReminder(delaySeconds = 15) {
 }
 
 export async function scheduleIosTestAdhan(prayer: PrayerKey = "fajr", delaySeconds = 30) {
-  if (Platform.OS !== "ios") return { available: false, granted: false, identifier: null as string | null };
+  if (Platform.OS !== "ios") return { available: false, granted: false, exact: true, identifier: null as string | null };
   const granted = await requestNotificationPermission();
-  if (!granted) return { available: true, granted: false, identifier: null as string | null };
+  if (!granted) return { available: true, granted: false, exact: true, identifier: null as string | null };
   const sound = prayer === "fajr" ? "hassoun_fajr_athan.wav" : "hassoun_athan.wav";
   const identifier = await Notifications.scheduleNotificationAsync({
     content: {
@@ -110,7 +110,7 @@ export async function scheduleIosTestAdhan(prayer: PrayerKey = "fajr", delaySeco
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: Math.max(5, delaySeconds), repeats: false }
   });
-  return { available: true, granted: true, identifier };
+  return { available: true, granted: true, exact: true, identifier };
 }
 
 export async function disableIslamicEventReminders() {
