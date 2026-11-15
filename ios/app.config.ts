@@ -46,7 +46,7 @@ const config: ExpoConfig = {
         "icon": "./assets/notification-icon.png",
         "color": "#0b5b47",
         "defaultChannel": "prayer-reminders-v2",
-        "sounds": ["./assets/attention_chime.wav"],
+        "sounds": ["./assets/attention_chime.wav", "./assets/hassoun_fajr_athan.wav", "./assets/hassoun_athan.wav"],
         "enableBackgroundRemoteNotifications": true
       }
     ]
