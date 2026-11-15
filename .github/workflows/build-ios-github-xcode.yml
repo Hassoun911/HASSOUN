@@ -4,6 +4,7 @@ on:
     branches: [release/ios-current]
     paths:
       - '.github/workflows/build-ios-github-xcode.yml'
+      - 'ios/modules/quran-audio/ios/QuranAudioModule.swift'
   workflow_dispatch:
 
 permissions:
@@ -144,6 +145,8 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/hassoun-ios-derived" \
             CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             build
           APP=$(find "$RUNNER_TEMP/hassoun-ios-derived/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)
           test -n "$APP"
