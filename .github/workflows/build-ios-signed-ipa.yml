@@ -180,7 +180,7 @@ jobs:
               src=src.replace('bundleIdentifier: "ca.wopt.windsorprayertimes",','bundleIdentifier: "ca.wopt.windsorprayertimes",\n    buildNumber: "'+os.environ["IOS_BUILD_NUMBER"]+'",',1)
           # Existing App Store version supports both iPhone and iPad.
           # Preserve both device families to prevent App Store Connect 90101.
-          src,n=re.subn(r'supportsTablet:\\s*(?:true|false)', 'supportsTablet: true', src, count=1)
+          src,n=re.subn(r'supportsTablet:\s*(?:true|false)', 'supportsTablet: true', src, count=1)
           assert n==1, "Missing ios.supportsTablet setting"
           assert f'buildNumber: "{os.environ["IOS_BUILD_NUMBER"]}"' in src
           path.write_text(src)
