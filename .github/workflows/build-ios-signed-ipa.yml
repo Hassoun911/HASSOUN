@@ -68,8 +68,27 @@ jobs:
           set -euo pipefail
           KEYCHAIN="$RUNNER_TEMP/hassoun-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
-          printf '%s' "$CERT" | base64 -D > "$RUNNER_TEMP/distribution.p12"
-          printf '%s' "$PROFILE" | base64 -D > "$RUNNER_TEMP/appstore.mobileprovision"
+          python3 - <<'PY'
+          import os,base64,binascii,sys
+          from pathlib import Path
+          for env_name,target,minimum in (
+              ("CERT","distribution.p12",500),
+              ("PROFILE","appstore.mobileprovision",500),
+          ):
+              value=os.environ[env_name]
+              normalized="".join(value.split())
+              try:
+                  if not normalized or len(normalized)%4:
+                      raise ValueError("invalid Base64 padding/length")
+                  decoded=base64.b64decode(normalized,validate=True)
+                  if len(decoded)<minimum or not decoded.startswith(b"\\x30"):
+                      raise ValueError("decoded bytes are not the expected Apple signing file")
+              except (ValueError,binascii.Error):
+                  print(f"::error::{env_name} GitHub Secret is not valid Base64 for its signing file. Recopy the ORIGINAL file as one encoded string; do not paste command text or an already encoded value twice.")
+                  sys.exit(1)
+              (Path(os.environ["RUNNER_TEMP"])/target).write_bytes(decoded)
+              print(f"{env_name} decoded successfully (file data withheld)")
+          PY
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
