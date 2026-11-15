@@ -34,6 +34,20 @@ output.chmod(0o755)
 print("HASSOUN_V1045_PROTECTED_V1044_SOURCE_RECONSTRUCTION_READY")
 PY
 
+# The inner protected v1.0.35 tablet reconstruction runs its own TypeScript
+# check before the later 1.0.44/1.0.45 patches. Adapt ONLY the temporary
+# workflow copy to restore the canonical helper immediately before that check.
+python3 - <<'PY'
+from pathlib import Path
+path = Path(".github/tablet/build-apk.sh")
+body = path.read_text(encoding="utf-8")
+anchor = "npm run typecheck\n"
+assert body.count(anchor) == 1, "Protected tablet typecheck anchor changed"
+body = body.replace(anchor, '( cd .. && python3 .github/scripts/restore-v1045-windsor-fetch.py )\n' + anchor, 1)
+path.write_text(body, encoding="utf-8")
+print("HASSOUN_V1045_FIRST_TYPECHECK_FIX_INSTALLED")
+PY
+
 bash /tmp/build-hassoun-v1045-from-approved-v1044.sh
 
 # Validate the final reconstructed source and branded images, not the stale
