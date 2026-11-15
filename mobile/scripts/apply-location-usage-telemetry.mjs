@@ -13,8 +13,8 @@ if (!text.includes(importLine.trim())) {
   text = text.replace(anchor, `${anchor}${importLine}`);
 }
 
-const windsorAnchor = '      await saveContext(context);\n      return context;';
-const windsorReplacement = '      await saveContext(context);\n      void recordPrayerLocationUsage(context.location, "mobile");\n      return context;';
+const windsorAnchor = '      if (live || !cachedWindsor) await saveContext(context);\\n      return context;';
+const windsorReplacement = '      if (live || !cachedWindsor) await saveContext(context);\\n      void recordPrayerLocationUsage(context.location, "mobile");\\n      return context;';
 if (!text.includes('void recordPrayerLocationUsage(context.location, "mobile");')) {
   if (!text.includes(windsorAnchor)) throw new Error("Could not find Windsor telemetry anchor");
   text = text.replace(windsorAnchor, windsorReplacement);
