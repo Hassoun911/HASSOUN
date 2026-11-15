@@ -47,7 +47,9 @@ function statusStyle(item?: MonthInfo | null): React.CSSProperties {
 
 export default function PrayerScheduleAdminPage() {
   const [month, setMonth] = useState(monthKeyNow());
-  const [currentMonth, setCurrentMonth] = useState(monthKeyNow());
+  // Only the trusted Windsor Worker determines which month is CURRENT.
+  // An empty marker is preferable to an incorrect marker based on a device clock.
+  const [currentMonth, setCurrentMonth] = useState("");
   const [sourceUrl, setSourceUrl] = useState("https://timing.athanplus.com/masjid/widgets/monthly?masjid_id=adJEGWAk&theme=1");
   const [rows, setRows] = useState<PrayerTimes>({});
   const [status, setStatus] = useState<Status | null>(null);
@@ -63,18 +65,21 @@ export default function PrayerScheduleAdminPage() {
   async function load(target = month) {
     if (!token) { location.replace("/admin/"); return; }
     setBusy("load"); setMessage("");
-    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
+    try { const data = await call(`/admin/prayer-schedule?month=${encodeURIComponent(target)}`) as Status; setStatus(data); if (data.currentMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth); setRows(data.prayerTimes || {}); if (data.sourceUrl) setSourceUrl(data.sourceUrl); setDirty(false); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to load schedule"); }
     finally { setBusy(""); }
   }
   useEffect(() => { void load(month); }, [month]);
-  // Keep the CURRENT marker tied to Windsor's calendar month.
-  // The data API's month may refer to the schedule being edited, and must never
-  // overwrite the live calendar marker with a stale selected month.
+  // Refresh only the calendar marker on long-lived admin sessions. Do not
+  // overwrite edited prayer-time rows, selected month or approval state.
   useEffect(() => {
-    const checkMonth = () => setCurrentMonth(monthKeyNow());
-    checkMonth();
-    const timer = setInterval(checkMonth, 60_000);
+    const check = async () => {
+      try {
+        const data = await call("/admin/prayer-schedule?month=" + encodeURIComponent(monthKeyNow())) as Status;
+        if (data.currentMonth && /^\\d{4}-(0[1-9]|1[0-2])$/.test(data.currentMonth)) setCurrentMonth(data.currentMonth);
+      } catch { /* Keep the last server-confirmed month when offline. */ }
+    };
+    const timer = setInterval(() => { void check(); }, 15 * 60_000);
     return () => clearInterval(timer);
   }, []);
 
