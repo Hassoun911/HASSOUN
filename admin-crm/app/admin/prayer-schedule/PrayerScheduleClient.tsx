@@ -36,17 +36,21 @@ function to12Hour(value: string): string {
   const hour = Number(match[1]);
   const minute = Number(match[2]);
   if (hour > 23 || minute > 59) return value;
-  return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "AM" : "PM"}`;
+  return `${hour % 12 || 12}:${match[2]}`;
 }
 
-function to24Hour(value: string): string | null {
-  const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(value.trim());
-  if (!match) return null;
-  let hour = Number(match[1]);
+// Editors use hour-only 12-hour notation. Preserve the existing prayer's
+// morning/afternoon period instead of guessing from an ambiguous displayed hour.
+function to24Hour(value: string, original: string): string | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  const originalMatch = /^(\d{2}):(\d{2})$/.exec(original);
+  if (!match || !originalMatch) return null;
+  const hour = Number(match[1]);
   const minute = Number(match[2]);
-  if (hour < 1 || hour > 12 || minute > 59) return null;
-  hour = hour % 12 + (match[3].toUpperCase() === "PM" ? 12 : 0);
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  const originalHour = Number(originalMatch[1]);
+  if (hour < 1 || hour > 12 || minute > 59 || originalHour > 23) return null;
+  const fullHour = (hour % 12) + (originalHour >= 12 ? 12 : 0);
+  return `${String(fullHour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function PrayerTimeInput({ date, prayer, value, onCommit }: {
@@ -58,7 +62,7 @@ function PrayerTimeInput({ date, prayer, value, onCommit }: {
   useEffect(() => { if (!focused) { setDraft(to12Hour(value)); setInvalid(false); } }, [value, focused]);
   const commit = () => {
     setFocused(false);
-    const converted = to24Hour(draft);
+    const converted = to24Hour(draft, value);
     if (converted === null) {
       setInvalid(true);
       return;
@@ -68,19 +72,18 @@ function PrayerTimeInput({ date, prayer, value, onCommit }: {
     if (converted !== value) onCommit(date, prayer, converted);
   };
   return <input
-    aria-label={`${date} ${prayer} (12-hour AM/PM)`}
+    aria-label={`${date} ${prayer} (12-hour time)`}
     value={draft}
     onFocus={() => setFocused(true)}
     onChange={(event) => { setDraft(event.target.value); setInvalid(false); }}
     onBlur={commit}
     onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { setDraft(to12Hour(value)); event.currentTarget.blur(); } }}
-    title={invalid ? "Enter a valid time, e.g. 5:39 AM or 12:16 PM" : "Enter a time with AM or PM"}
-    placeholder="5:39 AM"
+    title={invalid ? "Enter a valid 12-hour time, e.g. 5:39 or 12:16" : "12-hour time; original morning/evening period is preserved on save"}
+    placeholder="5:39"
     aria-invalid={invalid}
-    style={{...s.timeInput,width:116,borderColor:invalid?"#bd3030":"#d7e0dc",background:invalid?"#fff0f0":"#fff"}}
+    style={{...s.timeInput,width:92,borderColor:invalid?"#bd3030":"#d7e0dc",background:invalid?"#fff0f0":"#fff"}}
   />;
 }
-
 function labelPrayer(p: Prayer) { return p.charAt(0).toUpperCase() + p.slice(1); }
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 function monthName(key: string) { const match = /^\d{4}-(0[1-9]|1[0-2])$/.exec(key); return match ? MONTH_LABELS[Number(match[1]) - 1] : key; }
@@ -267,7 +270,7 @@ export default function PrayerScheduleClient({ initialMonth, initialWindsorDate 
       {message ? <div style={s.message}>{message}</div> : null}
 
       <section style={s.tableCard}>
-        <div style={s.tableHead}><div><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}><div style={s.cardTitle}>{month} prayer times</div><span style={{...s.selectedBadge,...statusStyle(selectedInfo)}}>{statusLabel(selectedInfo)}</span></div><div style={s.help}>{rowCount} days loaded • 12-hour Windsor local time (AM/PM){dirty ? " • unsaved edits" : ""}</div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={Boolean(busy)} onClick={() => void load(month)} style={s.secondary}>Reload current</button><button disabled={Boolean(busy) || !rowCount || selectedInfo?.status === "approved" && !dirty} onClick={() => void approveOrPublish()} style={s.publish}>{actionLabel}</button></div></div>
+        <div style={s.tableHead}><div><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}><div style={s.cardTitle}>{month} prayer times</div><span style={{...s.selectedBadge,...statusStyle(selectedInfo)}}>{statusLabel(selectedInfo)}</span></div><div style={s.help}>{rowCount} days loaded • 12-hour Windsor local time (no AM/PM labels){dirty ? " • unsaved edits" : ""}</div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={Boolean(busy)} onClick={() => void load(month)} style={s.secondary}>Reload current</button><button disabled={Boolean(busy) || !rowCount || selectedInfo?.status === "approved" && !dirty} onClick={() => void approveOrPublish()} style={s.publish}>{actionLabel}</button></div></div>
         {!status?.githubPublishingConfigured ? <div style={s.warning}><strong>GitHub publishing is not connected yet.</strong> Months already stored in the official JSON can still be approved here. Only pulled changes or manual edits require the <code>GITHUB_SCHEDULE_TOKEN</code> before they can be published.</div> : null}
         {needsPublish && !status?.githubPublishingConfigured ? <div style={s.warning}><strong>Publish required:</strong> this month contains pulled or edited data that has not been written to the official JSON yet.</div> : null}
         <div style={{overflowX:"auto"}}><table style={s.table}><thead><tr><th style={s.th}>Date</th>{PRAYERS.map((p) => <th key={p} style={s.th}>{labelPrayer(p)}</th>)}</tr></thead><tbody>{dates.map((date) => <tr key={date}><td style={s.dateCell}>{date}</td>{PRAYERS.map((p) => <td key={p} style={s.td}><PrayerTimeInput date={date} prayer={p} value={rows[date]?.[p] || ""} onCommit={edit} /></td>)}</tr>)}</tbody></table></div>
