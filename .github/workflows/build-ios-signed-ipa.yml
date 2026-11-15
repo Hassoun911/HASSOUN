@@ -1,0 +1,251 @@
+name: Build signed Hassoun iPhone IPA on GitHub Xcode
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_testflight:
+        description: 'Upload signed IPA to App Store Connect after successful export'
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hassoun-ios-signed-ipa
+  cancel-in-progress: false
+
+jobs:
+  signed-iphone-ipa:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CI: '1'
+      NODE_ENV: production
+      IOS_APP_VERSION: '1.0.45'
+      IOS_BUILD_NUMBER: '2026111501'
+      IOS_BUNDLE_ID: 'ca.wopt.windsorprayertimes'
+      IOS_TEAM_ID: 'WZ49WVUVU4'
+    steps:
+      - name: Checkout proven iOS source, not Android main
+        uses: actions/checkout@v4
+        with:
+          ref: release/ios-current
+          fetch-depth: 0
+
+      - name: Verify Xcode toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Require Apple distribution credentials in GitHub Secrets
+        env:
+          CERT: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          PASS: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          PROFILE: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CERT PASS PROFILE; do
+            if [[ -z "${!name}" ]]; then echo "::error::Missing signing secret $name (see workflow setup instructions)"; missing=1; fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "::error::Configure IOS_DISTRIBUTION_P12_BASE64, IOS_DISTRIBUTION_P12_PASSWORD, and IOS_APPSTORE_PROFILE_BASE64 in repository Actions secrets."
+            exit 1
+          fi
+
+      - name: Set up temporary keychain and install signing materials
+        env:
+          CERT: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          PASS: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          PROFILE: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/hassoun-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/distribution.p12"
+          printf '%s' "$PROFILE" | base64 --decode > "$RUNNER_TEMP/appstore.mobileprovision"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/distribution.p12" -k "$KEYCHAIN" -P "$PASS" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+          security default-keychain -d user -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          security cms -D -i "$RUNNER_TEMP/appstore.mobileprovision" > "$RUNNER_TEMP/appstore-profile.plist"
+          python3 - <<'PY'
+          import os, plistlib
+          from pathlib import Path
+          p=plistlib.loads((Path(os.environ["RUNNER_TEMP"])/"appstore-profile.plist").read_bytes())
+          team=os.environ["IOS_TEAM_ID"]; bundle=os.environ["IOS_BUNDLE_ID"]
+          assert team in p["TeamIdentifier"], "Provisioning profile belongs to another Apple team"
+          assert not p.get("ProvisionedDevices"), "This is a development/ad-hoc profile, not an App Store profile"
+          ent=p.get("Entitlements",{})
+          assert ent.get("get-task-allow") is False, "Profile must be distribution"
+          app_id=ent.get("application-identifier", "")
+          assert app_id==f"{team}.{bundle}", f"Wrong bundle ID in provisioning profile: {app_id}"
+          uuid=p["UUID"]
+          directory=Path.home()/"Library/MobileDevice/Provisioning Profiles"
+          directory.mkdir(parents=True,exist_ok=True)
+          (directory/f"{uuid}.mobileprovision").write_bytes((Path(os.environ["RUNNER_TEMP"])/"appstore.mobileprovision").read_bytes())
+          with open(os.environ["GITHUB_ENV"],"a") as env:
+              env.write(f"HASSOUN_PROFILE_UUID={uuid}\n")
+              env.write(f"HASSOUN_PROFILE_NAME={p['Name']}\n")
+          print("Verified App Store profile matches Hassoun app and Apple team")
+          PY
+          rm -f "$RUNNER_TEMP/distribution.p12"
+          echo "HASSOUN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Install Node 22 and dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ios/package-lock.json
+
+      - name: Install approved iOS dependencies
+        working-directory: ios
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @expo/ui expo-widgets
+
+      - name: Prepare iOS notification sounds and PNG assets
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          mkdir -p mobile/modules/prayer-audio/android/src/main/res/raw
+          git show origin/main:mobile/modules/prayer-audio/android/src/main/res/raw/fajr_adhan.mp3 > mobile/modules/prayer-audio/android/src/main/res/raw/fajr_adhan.mp3
+          git show origin/main:mobile/modules/prayer-audio/android/src/main/res/raw/azan9.mp3 > mobile/modules/prayer-audio/android/src/main/res/raw/azan9.mp3
+          brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+          bash ios/scripts/prepare-ios-athan-sounds.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageFile
+          ImageFile.LOAD_TRUNCATED_IMAGES=True
+          for p in Path("ios/assets").rglob("*.png"):
+              with Image.open(p) as source:
+                  source.load()
+                  image=source.convert("RGBA")
+              tmp=p.with_suffix(".repaired.png")
+              image.save(tmp,format="PNG")
+              tmp.replace(p)
+          PY
+
+      - name: Set new App Store version without altering committed release source
+        working-directory: ios
+        run: |
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          path=Path("app.config.ts")
+          src=path.read_text()
+          src,n=re.subn(r'version:\s*"[^"]+"',f'version: "{os.environ["IOS_APP_VERSION"]}"',src,count=1)
+          assert n==1
+          if re.search(r'buildNumber:\s*"[^"]+"',src):
+              src=re.sub(r'buildNumber:\s*"[^"]+"',f'buildNumber: "{os.environ["IOS_BUILD_NUMBER"]}"',src,count=1)
+          else:
+              src=src.replace('bundleIdentifier: "ca.wopt.windsorprayertimes",','bundleIdentifier: "ca.wopt.windsorprayertimes",\n    buildNumber: "'+os.environ["IOS_BUILD_NUMBER"]+'",',1)
+          assert f'buildNumber: "{os.environ["IOS_BUILD_NUMBER"]}"' in src
+          path.write_text(src)
+          PY
+
+      - name: Validate current iOS content and export JavaScript bundle
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          grep -q 'Show Weekly' src/HomePrayerPanel.tsx
+          grep -q 'Show Monthly' src/HomePrayerPanel.tsx
+          grep -q 'scheduleIosTestAdhan' App.tsx
+          grep -q 'hassoun_fajr_athan.wav' app.config.ts
+          npm run typecheck
+          npx expo export --platform ios --output-dir "$RUNNER_TEMP/hassoun-bundle"
+
+      - name: Generate native Xcode project and CocoaPods
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          npx expo prebuild --platform ios --clean --no-install
+          cd ios
+          pod install
+
+      - name: Archive signed iPhone app with GitHub Xcode
+        working-directory: ios/ios
+        run: |
+          set -euo pipefail
+          WORKSPACE=$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          test -n "$WORKSPACE"
+          SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
+          test "$SCHEME" = "Hassoun"
+          xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Hassoun.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/HassounDerivedData" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$HASSOUN_PROFILE_UUID" \
+            archive
+          test -d "$RUNNER_TEMP/Hassoun.xcarchive/Products/Applications/Hassoun.app"
+
+      - name: Export signed App Store IPA
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,plistlib
+          data={"method":"app-store-connect","destination":"export","signingStyle":"manual","teamID":os.environ["IOS_TEAM_ID"],"signingCertificate":"Apple Distribution","provisioningProfiles":{os.environ["IOS_BUNDLE_ID"]:os.environ["HASSOUN_PROFILE_UUID"]},"manageAppVersionAndBuildNumber":False,"uploadSymbols":True}
+          (Path(os.environ["RUNNER_TEMP"])/"ExportOptions.plist").write_bytes(plistlib.dumps(data))
+          PY
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Hassoun.xcarchive" \
+            -exportPath "$RUNNER_TEMP/HassounIPA" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+          find "$RUNNER_TEMP/HassounIPA" -maxdepth 1 -name '*.ipa' -print
+          test "$(find "$RUNNER_TEMP/HassounIPA" -maxdepth 1 -name '*.ipa' | wc -l | tr -d ' ')" = 1
+
+      - name: Verify signed IPA version and bundle identifier
+        run: |
+          set -euo pipefail
+          IPA=$(find "$RUNNER_TEMP/HassounIPA" -maxdepth 1 -name '*.ipa' -print -quit)
+          unzip -q "$IPA" 'Payload/*.app/Info.plist' -d "$RUNNER_TEMP/ipa-verify"
+          INFO=$(find "$RUNNER_TEMP/ipa-verify/Payload" -maxdepth 2 -name Info.plist -print -quit)
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO" | grep -Fx "$IOS_BUNDLE_ID"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO" | grep -Fx "$IOS_APP_VERSION"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO" | grep -Fx "$IOS_BUILD_NUMBER"
+          echo "Verified signed IPA bundle/version/build."
+
+      - name: Store signed IPA securely as GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hassoun-iOS-v1.0.45-signed-AppStore-IPA
+          path: ${{ runner.temp }}/HassounIPA/*.ipa
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload to Apple TestFlight only when explicitly requested
+        if: ${{ inputs.upload_to_testflight }}
+        env:
+          API_KEY: ${{ secrets.ASC_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.ASC_API_ISSUER_ID }}
+          API_KEY_P8: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$API_KEY" || -z "$API_ISSUER" || -z "$API_KEY_P8" ]]; then
+            echo "::error::For TestFlight upload, configure ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_P8_BASE64."
+            exit 1
+          fi
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          printf '%s' "$API_KEY_P8" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY}.p8"
+          chmod 600 "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY}.p8"
+          IPA=$(find "$RUNNER_TEMP/HassounIPA" -maxdepth 1 -name '*.ipa' -print -quit)
+          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$API_KEY" --apiIssuer "$API_ISSUER"
+          echo "App Store Connect upload accepted; Apple processing is separate from public release."
+
+      - name: Remove temporary signing materials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/appstore.mobileprovision" "$RUNNER_TEMP/appstore-profile.plist" "$RUNNER_TEMP/distribution.p12"
+          if [[ -n "${HASSOUN_KEYCHAIN:-}" && -f "$HASSOUN_KEYCHAIN" ]]; then security delete-keychain "$HASSOUN_KEYCHAIN" || true; fi
+          rm -rf "$HOME/.appstoreconnect/private_keys" || true
