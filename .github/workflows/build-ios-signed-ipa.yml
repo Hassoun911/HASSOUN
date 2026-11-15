@@ -64,8 +64,8 @@ jobs:
           set -euo pipefail
           KEYCHAIN="$RUNNER_TEMP/hassoun-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
-          printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/distribution.p12"
-          printf '%s' "$PROFILE" | base64 --decode > "$RUNNER_TEMP/appstore.mobileprovision"
+          printf '%s' "$CERT" | base64 -D > "$RUNNER_TEMP/distribution.p12"
+          printf '%s' "$PROFILE" | base64 -D > "$RUNNER_TEMP/appstore.mobileprovision"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
@@ -120,7 +120,9 @@ jobs:
           git show origin/main:mobile/modules/prayer-audio/android/src/main/res/raw/azan9.mp3 > mobile/modules/prayer-audio/android/src/main/res/raw/azan9.mp3
           brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
           bash ios/scripts/prepare-ios-athan-sounds.sh
-          python3 - <<'PY'
+          python3 -m venv "$RUNNER_TEMP/hassoun-png-python"
+          "$RUNNER_TEMP/hassoun-png-python/bin/python" -m pip install --quiet pillow
+          "$RUNNER_TEMP/hassoun-png-python/bin/python" - <<'PY'
           from pathlib import Path
           from PIL import Image, ImageFile
           ImageFile.LOAD_TRUNCATED_IMAGES=True
@@ -237,7 +239,7 @@ jobs:
             exit 1
           fi
           mkdir -p "$HOME/.appstoreconnect/private_keys"
-          printf '%s' "$API_KEY_P8" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY}.p8"
+          printf '%s' "$API_KEY_P8" | base64 -D > "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY}.p8"
           chmod 600 "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY}.p8"
           IPA=$(find "$RUNNER_TEMP/HassounIPA" -maxdepth 1 -name '*.ipa' -print -quit)
           xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$API_KEY" --apiIssuer "$API_ISSUER"
